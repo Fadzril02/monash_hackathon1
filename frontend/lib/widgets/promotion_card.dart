@@ -32,25 +32,27 @@ class PromotionCard extends StatelessWidget {
                 topRight: Radius.circular(12),
               ),
             ),
-            child: promotion.imageUrl != null
-                ? ClipRRect(
-                    borderRadius: const BorderRadius.only(
-                      topLeft: Radius.circular(12),
-                      topRight: Radius.circular(12),
-                    ),
-                    child: Image.asset(
+            child: ClipRRect(
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(12),
+                topRight: Radius.circular(12),
+              ),
+              child: promotion.imageUrl != null
+                  ? Image.asset(
                       'assets/images/promotions/${promotion.imageUrl}',
                       fit: BoxFit.cover,
+                      width: double.infinity,
+                      height: 120,
                       errorBuilder: (context, error, stackTrace) {
                         return const Center(
                           child: Icon(Icons.image, size: 48, color: Colors.grey),
                         );
                       },
+                    )
+                  : const Center(
+                      child: Icon(Icons.image, size: 48, color: Colors.grey),
                     ),
-                  )
-                : const Center(
-                    child: Icon(Icons.image, size: 48, color: Colors.grey),
-                  ),
+            ),
           ),
           // Content
           Expanded(
