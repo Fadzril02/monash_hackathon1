@@ -41,6 +41,10 @@ class PredictionDashboard extends StatelessWidget {
 
               // Financial Health Indicators (Phase 1)
               _buildFinancialHealthIndicators(analysis, appState),
+              const SizedBox(height: 16),
+
+              // Advanced Metrics (Phase 2)
+              _buildAdvancedMetrics(analysis, appState),
               const SizedBox(height: 24),
 
               // DSR Projection Chart
@@ -325,6 +329,306 @@ class PredictionDashboard extends StatelessWidget {
         ),
       ],
     );
+  }
+
+  Widget _buildAdvancedMetrics(analysis, AppState appState) {
+    final formatter = NumberFormat.currency(symbol: 'RM ', decimalDigits: 2);
+    final currentBalance = appState.safeBalance?.currentBalance ?? 0.0;
+    final avgExpenses = analysis.avgMonthlyExpenses;
+    final avgIncome = analysis.avgMonthlyIncome;
+    final totalDebt = analysis.totalDebtPayments;
+    final subscriptions = appState.subscriptions;
+
+    // 4. Spending Velocity
+    final dailySpending = (avgExpenses + totalDebt) / 30;
+    final financialRunway = dailySpending > 0
+        ? currentBalance / dailySpending
+        : 999.0;
+    final runwayColor = financialRunway > 180
+        ? Colors.green
+        : financialRunway > 90
+            ? Colors.orange
+            : Colors.red;
+
+    // 5. Subscription Burden
+    final subscriptionTotal = subscriptions
+        .where((s) => s.liabilityType == 'SUBSCRIPTION')
+        .fold(0.0, (sum, s) => sum + s.amount);
+    final subscriptionBurden = avgIncome > 0
+        ? (subscriptionTotal / avgIncome) * 100
+        : 0.0;
+    final subscriptionColor = subscriptionBurden < 5
+        ? Colors.green
+        : subscriptionBurden < 10
+            ? Colors.orange
+            : Colors.red;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Spending Velocity Card
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.speed, color: runwayColor, size: 24),
+                    const SizedBox(width: 8),
+                    const Text(
+                      'Spending Velocity',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Daily Average',
+                          style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          formatter.format(dailySpending),
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: runwayColor.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Column(
+                        children: [
+                          Text(
+                            '${financialRunway.toStringAsFixed(0)} days',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              color: runwayColor,
+                            ),
+                          ),
+                          Text(
+                            'of runway',
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: Colors.grey[600],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                LinearProgressIndicator(
+                  value: (financialRunway / 365).clamp(0.0, 1.0),
+                  backgroundColor: Colors.grey[300],
+                  valueColor: AlwaysStoppedAnimation<Color>(runwayColor),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+
+        // Subscription Burden Card
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.subscriptions, color: subscriptionColor, size: 24),
+                    const SizedBox(width: 8),
+                    const Text(
+                      'Subscription Burden',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Monthly Total',
+                          style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          formatter.format(subscriptionTotal),
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: subscriptionColor.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Column(
+                        children: [
+                          Text(
+                            '${subscriptionBurden.toStringAsFixed(1)}%',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              color: subscriptionColor,
+                            ),
+                          ),
+                          Text(
+                            'of income',
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: Colors.grey[600],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  subscriptionBurden < 5
+                      ? 'Healthy (Target: <5%)'
+                      : 'Consider reducing subscriptions',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: subscriptionColor,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+
+        // Expense Breakdown Card
+        _buildExpenseBreakdown(appState),
+      ],
+    );
+  }
+
+  Widget _buildExpenseBreakdown(AppState appState) {
+    final subscriptions = appState.subscriptions;
+
+    // Group by type
+    final Map<String, double> breakdown = {};
+    for (var sub in subscriptions) {
+      breakdown[sub.liabilityType] = (breakdown[sub.liabilityType] ?? 0.0) + sub.amount;
+    }
+
+    final total = breakdown.values.fold(0.0, (sum, val) => sum + val);
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.pie_chart, color: Colors.blue, size: 24),
+                const SizedBox(width: 8),
+                const Text(
+                  'Recurring Expenses Breakdown',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            ...breakdown.entries.map((entry) {
+              final percentage = total > 0 ? (entry.value / total) * 100 : 0.0;
+              final color = _getCategoryColor(entry.key);
+
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Column(
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              width: 12,
+                              height: 12,
+                              decoration: BoxDecoration(
+                                color: color,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              entry.key,
+                              style: const TextStyle(fontSize: 14),
+                            ),
+                          ],
+                        ),
+                        Text(
+                          'RM ${entry.value.toStringAsFixed(2)} (${percentage.toStringAsFixed(1)}%)',
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    LinearProgressIndicator(
+                      value: percentage / 100,
+                      backgroundColor: Colors.grey[200],
+                      valueColor: AlwaysStoppedAnimation<Color>(color),
+                    ),
+                  ],
+                ),
+              );
+            }).toList(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Color _getCategoryColor(String category) {
+    switch (category) {
+      case 'SUBSCRIPTION':
+        return Colors.purple;
+      case 'UTILITY':
+        return Colors.orange;
+      case 'INSURANCE':
+        return Colors.blue;
+      case 'LOAN':
+        return Colors.red;
+      case 'BNPL':
+        return Colors.pink;
+      default:
+        return Colors.grey;
+    }
   }
 
   Widget _buildDsrChart(ProjectionResult projectionResult) {
