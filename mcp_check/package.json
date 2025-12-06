@@ -1,0 +1,45 @@
+{
+  "name": "typescript-minimal-mcp",
+  "version": "1.0.0",
+  "description": "Read-only PostgreSQL Query MCP Server with Streamable HTTP Transport",
+  "main": "dist/server.js",
+  "type": "module",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "test:connection": "node test-connection.js",
+    "build": "node --max-old-space-size=4096 ./node_modules/typescript/bin/tsc",
+    "start": "node dist/server.js",
+    "dev": "tsx watch src/server.ts",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "streamable-http",
+    "typescript",
+    "postgresql",
+    "read-only",
+    "database"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.71.1",
+    "@leanmcp/auth": "^0.3.1",
+    "@leanmcp/core": "^0.3.1",
+    "@modelcontextprotocol/sdk": "^1.13.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.5.0",
+    "express": "^5.1.0",
+    "pg": "^8.16.3",
+    "zod": "^3.25.67"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.3",
+    "@types/node": "^24.0.3",
+    "@types/pg": "^8.11.10",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3"
+  }
+}

@@ -1,0 +1,32 @@
+services:
+  mcp-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rytguard-mcp-server
+    ports:
+      - "3001:3001"
+    env_file:
+      # Load environment variables from root .env file
+      - ../.env
+    environment:
+      # Override DB_HOST to use host.docker.internal for Docker to access host PostgreSQL
+      # This allows the container to connect to PostgreSQL running on your host machine
+      - DB_HOST=${DB_HOST:-host.docker.internal}
+      # Keep other settings from .env or use defaults
+      - DB_PORT=${DB_PORT:-5433}
+      - DB_NAME=${DB_NAME:-ryt_guard}
+      - DB_USER=${DB_USER:-postgres}
+      # Server config
+      - PORT=${PORT:-3001}
+      - NODE_ENV=${NODE_ENV:-production}
+    # Allow Docker container to access host machine's services
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3001/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s

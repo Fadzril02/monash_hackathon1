@@ -1,0 +1,13 @@
+node_modules
+dist
+.env
+.env.local
+*.log
+.git
+.gitignore
+README.md
+README-SETUP.md
+QUICK-START.md
+test-connection.js
+.vscode
+.idea
