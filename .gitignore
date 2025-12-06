@@ -3,3 +3,17 @@ frontend/.gitignore
 mcp_backend/.env
 /frontend/.dart_tool
 /frontend/.dart_tool
+
+# Dependencies
+node_modules/
+mcp_backend/node_modules/
+frontend/node_modules/
+
+# Build outputs
+dist/
+build/
+mcp_backend/dist/
+
+# Lock files (optional - some teams commit these)
+# package-lock.json
+# yarn.lock
