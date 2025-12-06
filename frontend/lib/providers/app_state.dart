@@ -1,14 +1,18 @@
 import 'package:flutter/foundation.dart';
 import '../config/api_config.dart';
 import '../services/api_service.dart';
+import '../services/projection_service.dart';
 import '../models/subscription.dart';
 import '../models/transaction.dart';
 import '../models/safe_balance.dart';
 import '../models/chat_message.dart';
 import '../models/api_exception.dart';
+import '../models/financial_analysis.dart';
+import '../models/monthly_projection.dart';
 
 class AppState extends ChangeNotifier {
   final ApiService _apiService = ApiService();
+  final ProjectionService _projectionService = ProjectionService();
   final String userExternalId = ApiConfig.defaultUserExternalId;
 
   // State variables
@@ -21,6 +25,11 @@ class AppState extends ChangeNotifier {
   List<ChatMessage> _chatHistory = [];
   bool _isChatLoading = false;
 
+  // Projection state
+  FinancialAnalysis? _financialAnalysis;
+  ProjectionResult? _projectionResult;
+  bool _isProjectionLoading = false;
+
   // Getters
   bool get isLoading => _isLoading;
   bool get isBackendConnected => _isBackendConnected;
@@ -29,6 +38,9 @@ class AppState extends ChangeNotifier {
   List<Subscription> get subscriptions => _subscriptions;
   List<ChatMessage> get chatHistory => _chatHistory;
   bool get isChatLoading => _isChatLoading;
+  FinancialAnalysis? get financialAnalysis => _financialAnalysis;
+  ProjectionResult? get projectionResult => _projectionResult;
+  bool get isProjectionLoading => _isProjectionLoading;
 
   // Initialize app - check backend health and load data
   Future<void> initialize() async {
@@ -41,11 +53,17 @@ class AppState extends ChangeNotifier {
       _isBackendConnected = await _apiService.checkHealth();
 
       if (_isBackendConnected) {
-        // Load initial data
+        // Load initial data (don't wait for financial analysis to avoid blocking)
         await Future.wait([
           loadSafeBalance(),
           loadSubscriptions(),
         ]);
+
+        // Load financial analysis without blocking (optional feature)
+        loadFinancialAnalysis().catchError((e) {
+          print('⚠️ Financial analysis not available: $e');
+          // Don't set error message - this is an optional feature
+        });
       } else {
         _errorMessage = 'Cannot connect to backend server';
       }
@@ -111,6 +129,18 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// Check if withdrawal would exceed safe balance
+  Future<Map<String, dynamic>> checkWithdrawal(double amount) async {
+    try {
+      return await _apiService.checkWithdrawal(
+        userExternalId: userExternalId,
+        amount: amount,
+      );
+    } catch (e) {
+      throw e;
+    }
+  }
+
   /// Withdraw money
   Future<bool> withdrawMoney(
     double amount,
@@ -135,11 +165,6 @@ class AppState extends ChangeNotifier {
       _isLoading = false;
       notifyListeners();
       return true;
-    } on SafeBalanceException catch (e) {
-      _errorMessage = e.toString();
-      _isLoading = false;
-      notifyListeners();
-      return false;
     } catch (e) {
       _errorMessage = e is ApiException ? e.message : 'Failed to withdraw: $e';
       _isLoading = false;
@@ -287,6 +312,106 @@ class AppState extends ChangeNotifier {
   /// Clear error message
   void clearError() {
     _errorMessage = null;
+    notifyListeners();
+  }
+
+  /// Load financial analysis
+  Future<void> loadFinancialAnalysis() async {
+    try {
+      print('📊 Loading financial analysis...');
+      _financialAnalysis = await _apiService.getFinancialAnalysis(
+        userExternalId: userExternalId,
+      );
+
+      print('✅ Financial analysis loaded successfully');
+
+      // Calculate projections after loading analysis
+      if (_financialAnalysis != null && _safeBalance != null) {
+        print('📈 Calculating projections...');
+        calculateProjections();
+      }
+
+      notifyListeners();
+    } catch (e) {
+      print('⚠️ Financial analysis not available: $e');
+      // Don't set global error - this is an optional feature
+      // The prediction tab will show "No financial data available"
+      _financialAnalysis = null;
+      notifyListeners();
+    }
+  }
+
+  /// Calculate baseline and scenario projections
+  void calculateProjections({List<WhatIfScenario>? scenarios}) {
+    if (_financialAnalysis == null || _safeBalance == null) {
+      print('⚠️ Cannot calculate projections: missing data');
+      return;
+    }
+
+    try {
+      _isProjectionLoading = true;
+      notifyListeners();
+
+      _projectionResult = _projectionService.calculateProjections(
+        analysis: _financialAnalysis!,
+        subscriptions: _subscriptions,
+        currentBalance: _safeBalance!.currentBalance,
+        scenarios: scenarios,
+      );
+
+      print('✅ Projections calculated successfully');
+      _isProjectionLoading = false;
+      notifyListeners();
+    } catch (e) {
+      print('❌ Failed to calculate projections: $e');
+      _isProjectionLoading = false;
+      notifyListeners();
+    }
+  }
+
+  /// Add a What-If scenario
+  Future<void> addWhatIfScenario(WhatIfScenario scenario) async {
+    if (_financialAnalysis == null || _safeBalance == null) {
+      _errorMessage = 'Cannot calculate scenarios without financial data';
+      notifyListeners();
+      return;
+    }
+
+    try {
+      _isProjectionLoading = true;
+      notifyListeners();
+
+      // Get existing scenarios
+      final existingScenarios = _projectionResult?.scenarios.keys
+              .map((name) => WhatIfScenario(name: name))
+              .toList() ??
+          [];
+
+      // Add new scenario
+      existingScenarios.add(scenario);
+
+      // Recalculate all projections
+      calculateProjections(scenarios: existingScenarios);
+    } catch (e) {
+      _errorMessage = 'Failed to add scenario: $e';
+      _isProjectionLoading = false;
+      notifyListeners();
+    }
+  }
+
+  /// Remove a What-If scenario
+  void removeWhatIfScenario(String scenarioName) {
+    if (_projectionResult == null) return;
+
+    final updatedScenarios = Map<String, List<MonthlyProjection>>.from(
+        _projectionResult!.scenarios);
+    updatedScenarios.remove(scenarioName);
+
+    _projectionResult = ProjectionResult(
+      baseline: _projectionResult!.baseline,
+      scenarios: updatedScenarios,
+    );
+
     notifyListeners();
   }
 }

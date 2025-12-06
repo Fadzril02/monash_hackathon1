@@ -3,7 +3,9 @@ import { setupMinimalResource } from "./minimal/resource.js";
 import { setupMinimalTool } from "./minimal/tool.js";
 import { setupMinimalPrompt } from "./minimal/prompt.js";
 import { setupBankingTools } from "./tools/banking-tools.js";
+import { setupPromotionTools } from "./tools/promotions-tools.js";
 import { setupFinancialAdvisorPrompt } from "./prompts/financial-advisor-prompt.js";
+import { setupPromotionAdvisorPrompt } from "./prompts/promotion-advisor-prompt.js";
 
 /**
  * Creates and configures the PostgreSQL MCP server instance
@@ -38,9 +40,17 @@ export function createMCPServer(): McpServer {
   setupBankingTools(server);
   console.log("✅ Banking tools registered: get-safe-balance, get-upcoming-bills, check-affordability, get-spending-summary, save-conversation");
 
+  // Register RytGuard promotion tools
+  setupPromotionTools(server);
+  console.log("✅ Promotion tools registered: rank-promotions");
+
   // Register RytGuard financial advisor prompt
   setupFinancialAdvisorPrompt(server);
   console.log("✅ Prompt registered: financial-advisor");
+
+  // Register RytGuard promotion advisor prompt
+  setupPromotionAdvisorPrompt(server);
+  console.log("✅ Prompt registered: promotion-advisor");
 
   console.log("🎉 PostgreSQL MCP server configuration completed");
 

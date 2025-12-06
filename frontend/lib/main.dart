@@ -4,6 +4,12 @@ import 'package:intl/intl.dart';
 import 'providers/app_state.dart';
 import 'models/subscription.dart';
 import 'models/chat_message.dart';
+import 'widgets/prediction_dashboard.dart';
+import 'widgets/what_if_dialog.dart';
+import 'widgets/promotions_page.dart';
+import 'services/api_service.dart';
+import 'models/promotion.dart';
+import 'config/api_config.dart';
 
 void main() {
   runApp(const RytGuardApp());
@@ -21,6 +27,8 @@ class RytGuardApp extends StatelessWidget {
         theme: ThemeData(
           scaffoldBackgroundColor: const Color(0xFFF8FAFC),
           useMaterial3: true,
+          fontFamily: 'Arial', // Set default font family
+          fontFamilyFallback: const ['Roboto', 'sans-serif'], // Fallback fonts
         ),
         home: const RytGuardHomePage(),
       ),
@@ -28,22 +36,32 @@ class RytGuardApp extends StatelessWidget {
   }
 }
 
-class RytGuardHomePage extends StatelessWidget {
+class RytGuardHomePage extends StatefulWidget {
   const RytGuardHomePage({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: Consumer<AppState>(
-        builder: (context, appState, child) {
-          if (appState.isLoading && appState.safeBalance == null) {
-            return const Center(
-              child: CircularProgressIndicator(),
-            );
-          }
+  State<RytGuardHomePage> createState() => _RytGuardHomePageState();
+}
 
-          if (!appState.isBackendConnected) {
-            return Center(
+class _RytGuardHomePageState extends State<RytGuardHomePage> {
+  int _selectedIndex = 0;
+  final GlobalKey<_PromotionBannerState> _promotionBannerKey = GlobalKey<_PromotionBannerState>();
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<AppState>(
+      builder: (context, appState, child) {
+        if (appState.isLoading && appState.safeBalance == null) {
+          return const Scaffold(
+            body: Center(
+              child: CircularProgressIndicator(),
+            ),
+          );
+        }
+
+        if (!appState.isBackendConnected) {
+          return Scaffold(
+            body: Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
@@ -62,33 +80,99 @@ class RytGuardHomePage extends StatelessWidget {
                   ),
                 ],
               ),
-            );
-          }
-
-          return SingleChildScrollView(
-            child: Column(
-              children: [
-                const _HeaderSection(),
-                const SizedBox(height: 20),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const _SafeBalanceCard(),
-                      const SizedBox(height: 20),
-                      const _ChatbotWidget(),
-                      const SizedBox(height: 20),
-                      _UpcomingBillsSection(subscriptions: appState.subscriptions),
-                      const SizedBox(height: 40),
-                    ],
-                  ),
-                ),
-              ],
             ),
           );
-        },
-      ),
+        }
+
+        return Scaffold(
+          body: IndexedStack(
+            index: _selectedIndex,
+            children: [
+              // Main Dashboard
+              SingleChildScrollView(
+                child: Column(
+                  children: [
+                    const _HeaderSection(),
+                    const SizedBox(height: 20),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _PromotionBanner(
+                            key: _promotionBannerKey,
+                          ),
+                          const SizedBox(height: 20),
+                          const _SafeBalanceCard(),
+                          const SizedBox(height: 20),
+                          const _ChatbotWidget(),
+                          const SizedBox(height: 20),
+                          _UpcomingBillsSection(subscriptions: appState.subscriptions),
+                          const SizedBox(height: 40),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              // Prediction Dashboard
+              Column(
+                children: [
+                  const _HeaderSection(),
+                  Expanded(
+                    child: const PredictionDashboard(),
+                  ),
+                ],
+              ),
+              // Promotions Page
+              const PromotionsPage(),
+            ],
+          ),
+          floatingActionButton: _selectedIndex == 1
+              ? FloatingActionButton.extended(
+                  onPressed: () {
+                    showDialog(
+                      context: context,
+                      builder: (context) => const WhatIfDialog(),
+                    );
+                  },
+                  icon: const Icon(Icons.science, color: Colors.white),
+                  label: const Text(
+                    'What-If',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  backgroundColor: const Color(0xFF0000E6),
+                  foregroundColor: Colors.white,
+                )
+              : null,
+          bottomNavigationBar: BottomNavigationBar(
+            currentIndex: _selectedIndex,
+            onTap: (index) {
+              setState(() {
+                _selectedIndex = index;
+              });
+            },
+            selectedItemColor: const Color(0xFF0000E6),
+            items: const [
+              BottomNavigationBarItem(
+                icon: Icon(Icons.home),
+                label: 'Home',
+              ),
+              BottomNavigationBarItem(
+                icon: Icon(Icons.trending_up),
+                label: 'Predictions',
+              ),
+              BottomNavigationBarItem(
+                icon: Icon(Icons.local_offer),
+                label: 'Promotions',
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }
@@ -376,17 +460,18 @@ class _SafeBalanceCard extends StatelessWidget {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Reload Money'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: amountController,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText: 'Amount (RM)',
-                hintText: 'e.g., 1000',
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: amountController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Amount (RM)',
+                  hintText: 'e.g., 1000',
+                ),
               ),
-            ),
             const SizedBox(height: 16),
             TextField(
               controller: descriptionController,
@@ -397,25 +482,26 @@ class _SafeBalanceCard extends StatelessWidget {
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              final amount = double.tryParse(amountController.text);
-              if (amount == null || amount <= 0) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Please enter a valid amount')),
-                );
-                return;
-              }
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          onPressed: () async {
+            final amount = double.tryParse(amountController.text);
+            if (amount == null || amount <= 0) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Please enter a valid amount')),
+              );
+              return;
+            }
 
-              Navigator.pop(context);
+            Navigator.pop(context);
 
-              final appState = Provider.of<AppState>(context, listen: false);
-              final success = await appState.reloadMoney(
+            final appState = Provider.of<AppState>(context, listen: false);
+            final success = await appState.reloadMoney(
                 amount,
                 description: descriptionController.text.isEmpty
                     ? null
@@ -423,6 +509,13 @@ class _SafeBalanceCard extends StatelessWidget {
               );
 
               if (context.mounted) {
+                // Refresh promotion banner after successful reload
+                if (success) {
+                  // Find the ancestor state and refresh banner
+                  final homePageState = context.findAncestorStateOfType<_RytGuardHomePageState>();
+                  homePageState?._promotionBannerKey.currentState?.refresh();
+                }
+                
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     content: Text(success
@@ -440,7 +533,112 @@ class _SafeBalanceCard extends StatelessWidget {
     );
   }
 
-  void _showWithdrawDialog(BuildContext context) {
+  void _showWithdrawDialog(BuildContext context) async {
+    // First check safe balance status
+    final appState = Provider.of<AppState>(context, listen: false);
+    final safeBalance = appState.safeBalance;
+    
+    print('🔍 Checking safe balance before withdrawal...');
+    print('📊 Safe balance: ${safeBalance?.safeBalance}, Status: ${safeBalance?.status}');
+    
+    // If safe balance is CRITICAL (red), warn user first
+    if (safeBalance != null && safeBalance.status == 'CRITICAL') {
+      print('⚠️ Safe balance is CRITICAL - showing warning first');
+      
+      final shouldProceed = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => AlertDialog(
+          title: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: const [
+              Icon(Icons.warning_amber_rounded, color: Colors.red, size: 28),
+              SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  'Critical Balance Warning',
+                  style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  '⚠️ Your Safe Balance is CRITICAL',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                    color: Colors.red,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Current Balance: RM ${safeBalance.currentBalance.toStringAsFixed(2)}',
+                  style: const TextStyle(fontSize: 14),
+                ),
+                Text(
+                  'Safe to Spend: RM ${safeBalance.safeBalance.toStringAsFixed(2)}',
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.red,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'You have insufficient funds to cover your upcoming bills. Any withdrawal may put you at risk of missing payments.',
+                  style: TextStyle(fontSize: 13),
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'Do you still want to proceed with withdrawal?',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                print('❌ User cancelled at critical warning');
+                Navigator.pop(context, false);
+              },
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                print('✅ User chose to continue anyway');
+                Navigator.pop(context, true);
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+              ),
+              child: const Text('Continue Anyway'),
+            ),
+          ],
+        ),
+      );
+
+      // If user cancels, don't show withdraw dialog
+      if (shouldProceed != true) {
+        print('🚫 Withdrawal cancelled by user at critical warning stage');
+        return;
+      }
+      
+      print('➡️ User confirmed, showing withdrawal form...');
+    } else {
+      print('✅ Safe balance is OK (${safeBalance?.status}), proceeding directly to withdrawal form');
+    }
+
+    // Show the regular withdraw dialog
     final amountController = TextEditingController();
     final recipientController = TextEditingController();
     final descriptionController = TextEditingController();
@@ -449,17 +647,18 @@ class _SafeBalanceCard extends StatelessWidget {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Withdraw Money'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: amountController,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText: 'Amount (RM)',
-                hintText: 'e.g., 500',
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: amountController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Amount (RM)',
+                  hintText: 'e.g., 500',
+                ),
               ),
-            ),
             const SizedBox(height: 16),
             TextField(
               controller: recipientController,
@@ -478,48 +677,202 @@ class _SafeBalanceCard extends StatelessWidget {
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              final amount = double.tryParse(amountController.text);
-              if (amount == null || amount <= 0) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Please enter a valid amount')),
-                );
-                return;
-              }
-
-              if (recipientController.text.isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Please enter recipient name')),
-                );
-                return;
-              }
-
-              Navigator.pop(context);
-
-              final appState = Provider.of<AppState>(context, listen: false);
-              final success = await appState.withdrawMoney(
-                amount,
-                recipientController.text,
-                description: descriptionController.text.isEmpty
-                    ? null
-                    : descriptionController.text,
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          onPressed: () async {
+            final amount = double.tryParse(amountController.text);
+            if (amount == null || amount <= 0) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Please enter a valid amount')),
               );
+              return;
+            }
 
-              if (context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(success
-                        ? 'Money withdrawn successfully!'
-                        : appState.errorMessage ?? 'Failed to withdraw money'),
-                    backgroundColor: success ? Colors.green : Colors.red,
-                  ),
+            if (recipientController.text.isEmpty) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Please enter recipient name')),
+              );
+              return;
+            }
+
+            Navigator.pop(context);
+
+            // Small delay to allow dialog to close properly
+            await Future.delayed(const Duration(milliseconds: 100));
+
+            // Check withdrawal first
+            final appState = Provider.of<AppState>(context, listen: false);
+            try {
+              print('🔍 Checking withdrawal for amount: $amount');
+              final checkResult = await appState.checkWithdrawal(amount);
+              print('✅ Check result: $checkResult');
+              
+              final exceedsSafeBalance = checkResult['exceedsSafeBalance'] == true;
+              final safeBalance = checkResult['safeBalance'];
+              final canAfford = checkResult['canAfford'] == true;
+              
+              print('📊 Exceeds safe balance: $exceedsSafeBalance, Safe balance: $safeBalance, Can afford: $canAfford');
+
+              if (!canAfford) {
+                // Insufficient current balance
+                print('❌ Cannot afford - current balance insufficient');
+                if (context.mounted) {
+                  await showDialog(
+                    context: context,
+                    builder: (context) => AlertDialog(
+                      title: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: const [
+                          Icon(Icons.error, color: Colors.red, size: 24),
+                          SizedBox(width: 8),
+                          Text('Insufficient Balance'),
+                        ],
+                      ),
+                      content: const Text(
+                        'You do not have enough balance to complete this withdrawal.',
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(context),
+                          child: const Text('OK'),
+                        ),
+                      ],
+                    ),
+                  );
+                }
+                return;
+              }
+
+              // If safe balance is null or negative, or if amount exceeds safe balance, show warning
+              final shouldWarn = safeBalance == null || 
+                                 (safeBalance is num && safeBalance <= 0) || 
+                                 exceedsSafeBalance;
+              
+              if (shouldWarn) {
+                print('⚠️ Showing warning dialog... (safeBalance: $safeBalance)');
+                // Show warning confirmation dialog
+                if (context.mounted) {
+                  final safeBalanceDisplay = (safeBalance != null && safeBalance is num) 
+                      ? safeBalance.toStringAsFixed(2) 
+                      : '0.00';
+                  
+                  print('💬 About to show dialog...');
+                  final confirm = await showDialog<bool>(
+                    context: context,
+                    barrierDismissible: false, // User must tap a button
+                    builder: (context) {
+                      print('🏗️ Building warning dialog');
+                      return AlertDialog(
+                        title: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: const [
+                            Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 24),
+                            SizedBox(width: 8),
+                            Flexible(
+                              child: Text(
+                                'Warning',
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                        content: SingleChildScrollView(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'This withdrawal (RM ${amount.toStringAsFixed(2)}) exceeds your safe balance (RM $safeBalanceDisplay).',
+                                style: const TextStyle(fontWeight: FontWeight.bold),
+                              ),
+                              const SizedBox(height: 12),
+                              const Text(
+                                'This means you may not have enough to cover your upcoming bills and expenses.',
+                              ),
+                              const SizedBox(height: 16),
+                              const Text(
+                                'Do you want to proceed anyway?',
+                                style: TextStyle(fontWeight: FontWeight.w600),
+                              ),
+                            ],
+                          ),
+                        ),
+                        actions: [
+                          TextButton(
+                            onPressed: () {
+                              print('❌ User tapped Cancel');
+                              Navigator.pop(context, false);
+                            },
+                            child: const Text('Cancel'),
+                          ),
+                          ElevatedButton(
+                            onPressed: () {
+                              print('✅ User tapped Proceed');
+                              Navigator.pop(context, true);
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.orange,
+                            ),
+                            child: const Text('Proceed'),
+                          ),
+                        ],
+                      );
+                    },
+                  );
+                  
+                  print('📤 Dialog returned: $confirm');
+
+                  if (confirm != true) {
+                    print('❌ User cancelled withdrawal');
+                    return; // User cancelled
+                  }
+                  
+                  print('✅ User confirmed, proceeding...');
+                }
+              }
+
+                // Proceed with withdrawal
+                print('💸 Proceeding with withdrawal...');
+                final success = await appState.withdrawMoney(
+                  amount,
+                  recipientController.text,
+                  description: descriptionController.text.isEmpty
+                      ? null
+                      : descriptionController.text,
                 );
+
+                if (context.mounted) {
+                  // Refresh promotion banner after successful withdrawal
+                  if (success) {
+                    // Find the ancestor state and refresh banner
+                    final homePageState = context.findAncestorStateOfType<_RytGuardHomePageState>();
+                    homePageState?._promotionBannerKey.currentState?.refresh();
+                  }
+                  
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(success
+                          ? 'Money withdrawn successfully!'
+                          : appState.errorMessage ?? 'Failed to withdraw money'),
+                      backgroundColor: success ? Colors.green : Colors.red,
+                    ),
+                  );
+                }
+              } catch (e) {
+                print('❌ Error in withdrawal flow: $e');
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Error checking withdrawal: $e'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                }
               }
             },
             child: const Text('Withdraw'),
@@ -876,10 +1229,57 @@ class _ChatbotWidgetState extends State<_ChatbotWidget> {
                 ),
               ),
 
+              // Quick Action Buttons
+              if (chatHistory.isEmpty)
+                Container(
+                  color: const Color(0xFFF8FAFC),
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Quick Actions:',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF64748B),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          _QuickActionChip(
+                            label: 'Check my financial health',
+                            icon: '💰',
+                            onTap: () => _sendMessage('What is my current financial health? Show me my DSR and upcoming bills.'),
+                          ),
+                          _QuickActionChip(
+                            label: 'Can I afford this?',
+                            icon: '🛒',
+                            onTap: () => _sendMessage('Can I afford a purchase of RM 500?'),
+                          ),
+                          _QuickActionChip(
+                            label: '12-month prediction',
+                            icon: '📊',
+                            onTap: () => _sendMessage('Show me my 12-month financial projection. What will my DSR look like?'),
+                          ),
+                          _QuickActionChip(
+                            label: 'Spending tips',
+                            icon: '💡',
+                            onTap: () => _sendMessage('Give me tips to improve my financial health and reduce debt.'),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+
               // Chat Body
               Container(
                 color: const Color(0xFFF8FAFC),
-                height: chatHistory.isEmpty ? 150 : 300,
+                height: chatHistory.isEmpty ? 200 : 300,
                 padding: const EdgeInsets.all(16),
                 child: chatHistory.isEmpty
                     ? const Center(
@@ -1288,5 +1688,265 @@ class _BillItem extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+// Quick Action Chip Widget
+class _QuickActionChip extends StatelessWidget {
+  final String label;
+  final String icon;
+  final VoidCallback onTap;
+
+  const _QuickActionChip({
+    required this.label,
+    required this.icon,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: const Color(0xFFE2E8F0)),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x0A000000),
+              blurRadius: 2,
+              offset: Offset(0, 1),
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(icon, style: const TextStyle(fontSize: 14)),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: Color(0xFF475569),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// --- PROMOTION BANNER ---
+class _PromotionBanner extends StatefulWidget {
+  const _PromotionBanner({Key? key}) : super(key: key);
+
+  @override
+  State<_PromotionBanner> createState() => _PromotionBannerState();
+}
+
+class _PromotionBannerState extends State<_PromotionBanner> with AutomaticKeepAliveClientMixin {
+  final ApiService _apiService = ApiService();
+  final String _userExternalId = ApiConfig.defaultUserExternalId;
+  Promotion? _topPromotion;
+  bool _isLoading = true;
+
+  @override
+  bool get wantKeepAlive => true; // Keep state alive when navigating away
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTopPromotion();
+  }
+
+  @override
+  void didUpdateWidget(_PromotionBanner oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Don't reload on widget updates - only manual refresh
+  }
+
+  @override
+  void dispose() {
+    // Clean up
+    super.dispose();
+  }
+
+  // Public method to refresh the promotion (called after reload/withdraw)
+  void refresh() {
+    print('🔄 Manual refresh triggered for promotion banner');
+    _loadTopPromotion();
+  }
+
+  Future<void> _loadTopPromotion() async {
+    // Check if widget is still mounted before starting
+    if (!mounted) return;
+    
+    setState(() {
+      _isLoading = true;
+    });
+    
+    try {
+      print('📊 Loading top promotion based on current safe balance...');
+      final promotions = await _apiService.getPromotions(
+        userExternalId: _userExternalId,
+      );
+
+      // Check if widget is still mounted after async operation
+      if (!mounted) return;
+
+      if (promotions.isNotEmpty) {
+        print('✅ Loaded ${promotions.length} promotions, showing top: ${promotions[0].title}');
+        setState(() {
+          _topPromotion = promotions[0]; // First promotion is the top-ranked one
+          _isLoading = false;
+        });
+      } else {
+        print('⚠️ No promotions available');
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      print('❌ Error loading top promotion: $e');
+      
+      // Check if widget is still mounted before calling setState
+      if (!mounted) return;
+      
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Hide banner completely while loading or if no promotion available
+    if (_isLoading || _topPromotion == null) {
+      print('🙈 Promotion banner hidden (loading: $_isLoading, hasPromotion: ${_topPromotion != null})');
+      return const SizedBox.shrink(); // Completely invisible, takes no space
+    }
+
+    print('✨ Showing promotion banner: ${_topPromotion!.title}');
+    
+    // Animate the banner appearance
+    return AnimatedOpacity(
+      opacity: _topPromotion != null ? 1.0 : 0.0,
+      duration: const Duration(milliseconds: 300),
+      child: GestureDetector(
+      onTap: () {
+        // Navigate to PromotionsPage by changing the selected index
+        final homePageState = context.findAncestorStateOfType<_RytGuardHomePageState>();
+        if (homePageState != null) {
+          homePageState.setState(() {
+            homePageState._selectedIndex = 2; // Promotions tab index
+          });
+        }
+      },
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              const Color(0xFFFF6B35), // Bright orange-red
+              const Color(0xFFFF8C42), // Lighter orange
+            ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFFFF6B35).withOpacity(0.3),
+              blurRadius: 8,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            // Icon
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(
+                Icons.local_offer,
+                color: Colors.white,
+                size: 24,
+              ),
+            ),
+            const SizedBox(width: 16),
+            // Text content
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Special Offer',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.9),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    _topPromotion!.title,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      height: 1.3,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  if (_topPromotion!.subtitle != null) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      _topPromotion!.subtitle!,
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.9),
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            // Arrow icon
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(
+                Icons.arrow_forward_ios,
+                color: Colors.white,
+                size: 18,
+              ),
+            ),
+          ],
+        ),
+      ),
+      ), // Close GestureDetector
+    ); // Close AnimatedOpacity
   }
 }
