@@ -1,5 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { Pool } from "pg";
+import mysql from "mysql2/promise";
 import { z } from "zod";
 
 /**

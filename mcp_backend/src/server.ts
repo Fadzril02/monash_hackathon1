@@ -181,8 +181,18 @@ let pool: mysql.Pool;
 
 if (process.env.DATABASE_URL) {
   // Use DATABASE_URL (preferred for TiDB and cloud databases)
-  pool = mysql.createPool(process.env.DATABASE_URL);
-  console.log('📊 Using DATABASE_URL for MySQL/TiDB connection');
+  // Parse the connection string and add SSL configuration
+  const connectionString = process.env.DATABASE_URL;
+
+  // For TiDB Cloud, we need to enable SSL
+  pool = mysql.createPool({
+    uri: connectionString,
+    ssl: {
+      rejectUnauthorized: true,
+      minVersion: 'TLSv1.2'
+    }
+  });
+  console.log('📊 Using DATABASE_URL for MySQL/TiDB connection with SSL');
 } else {
   // Fallback to individual environment variables
   pool = mysql.createPool({
@@ -191,6 +201,10 @@ if (process.env.DATABASE_URL) {
     database: process.env.DB_NAME || 'ryt_guard',
     user: process.env.DB_USER || 'root',
     password: process.env.DB_PASSWORD || '',
+    ssl: process.env.DB_SSL === 'true' ? {
+      rejectUnauthorized: true,
+      minVersion: 'TLSv1.2'
+    } : undefined
   });
   console.log('📊 Using individual DB config for MySQL connection');
 }

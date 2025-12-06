@@ -1,15 +1,34 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { Pool } from "pg";
+import mysql from "mysql2/promise";
 import { z } from "zod";
 
 /**
  * Helper function to create database connection
  */
-function createDbConnection(): Pool {
-  const connectionString = process.env.DATABASE_URL ||
-    `postgresql://${process.env.DB_USER || 'postgres'}:${process.env.DB_PASSWORD || '420690'}@${process.env.DB_HOST || '127.0.0.1'}:${process.env.DB_PORT || '5433'}/${process.env.DB_NAME || 'ryt_guard'}`;
+function createDbConnection(): mysql.Pool {
+  const connectionString = process.env.DATABASE_URL;
 
-  return new Pool({ connectionString });
+  if (connectionString) {
+    return mysql.createPool({
+      uri: connectionString,
+      ssl: {
+        rejectUnauthorized: true,
+        minVersion: 'TLSv1.2'
+      }
+    });
+  }
+
+  return mysql.createPool({
+    host: process.env.DB_HOST || 'localhost',
+    port: parseInt(process.env.DB_PORT || '3306'),
+    database: process.env.DB_NAME || 'ryt_guard',
+    user: process.env.DB_USER || 'root',
+    password: process.env.DB_PASSWORD || '',
+    ssl: process.env.DB_SSL === 'true' ? {
+      rejectUnauthorized: true,
+      minVersion: 'TLSv1.2'
+    } : undefined
+  });
 }
 
 /**
