@@ -1121,7 +1121,7 @@ class PredictionDashboard extends StatelessWidget {
                 showTitles: true,
                 reservedSize: 40,
                 getTitlesWidget: (value, meta) {
-                  return Text('${value.toInt()}%',
+                  return Text('${value.toStringAsFixed(2)}%',
                       style: const TextStyle(fontSize: 10));
                 },
               ),
@@ -1253,7 +1253,7 @@ class PredictionDashboard extends StatelessWidget {
                 showTitles: true,
                 reservedSize: 50,
                 getTitlesWidget: (value, meta) {
-                  return Text('\$${(value / 1000).toStringAsFixed(0)}k',
+                  return Text('\$${(value / 1000).toStringAsFixed(2)}k',
                       style: const TextStyle(fontSize: 10));
                 },
               ),
@@ -1344,7 +1344,7 @@ class PredictionDashboard extends StatelessWidget {
             ),
             title: Text(scenarioName),
             subtitle: Text(
-              'Final DSR: ${finalProjection.projectedDsr.toStringAsFixed(1)}% | '
+              'Final DSR: ${finalProjection.projectedDsr.toStringAsFixed(2)}% | '
               'Balance: \$${finalProjection.projectedBalance.toStringAsFixed(2)}',
             ),
             trailing: IconButton(

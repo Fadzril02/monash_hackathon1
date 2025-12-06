@@ -8,7 +8,7 @@ class ProjectionService {
   static const double dsrHealthyThreshold = 30.0;
   static const double dsrWarningThreshold = 40.0;
 
-  /// Calculate 12-month baseline projection
+  /// Calculate 12-month baseline projection with realistic variations
   List<MonthlyProjection> calculateBaselineProjection({
     required FinancialAnalysis analysis,
     required List<Subscription> subscriptions,
@@ -17,23 +17,71 @@ class ProjectionService {
     final projections = <MonthlyProjection>[];
     var runningBalance = currentBalance;
 
+    // Calculate net cash flow to determine trajectory
+    final baseNetCashFlow = analysis.avgMonthlyIncome -
+                            analysis.avgMonthlyExpenses -
+                            analysis.totalDebtPayments;
+    final isDeficit = baseNetCashFlow < 0;
+
     for (var i = 0; i < 12; i++) {
       final month = DateTime.now().add(Duration(days: 30 * i));
+      final monthIndex = month.month;
 
-      // Use historical averages for income and expenses
-      final projectedIncome = analysis.avgMonthlyIncome;
-      final projectedExpenses = analysis.avgMonthlyExpenses;
-      final projectedDebt = analysis.totalDebtPayments;
+      // 1. INCOME VARIATIONS (±5% realistic fluctuation)
+      // Simulate irregular freelance income, bonuses, etc.
+      var projectedIncome = analysis.avgMonthlyIncome;
 
-      // Calculate DSR
+      // Add income variation based on month
+      if (monthIndex == 12) {
+        // December: Bonus month (+20%)
+        projectedIncome = projectedIncome * 1.20;
+      } else if (i % 3 == 0 && i > 0) {
+        // Every 3 months: Freelance income (+10%)
+        projectedIncome = projectedIncome * 1.10;
+      } else if (i % 4 == 2) {
+        // Some months: Lower income (-5%)
+        projectedIncome = projectedIncome * 0.95;
+      }
+
+      // 2. EXPENSE VARIATIONS (seasonal + inflation)
+      var projectedExpenses = analysis.avgMonthlyExpenses;
+
+      // Monthly inflation (0.3% = 3.6% annual)
+      projectedExpenses = projectedExpenses * (1 + (i * 0.003));
+
+      // Seasonal variations
+      if (monthIndex == 12) {
+        // December: Holiday spending (+25%)
+        projectedExpenses = projectedExpenses * 1.25;
+      } else if (monthIndex == 1 || monthIndex == 2) {
+        // Jan-Feb: CNY, back-to-school (+15%)
+        projectedExpenses = projectedExpenses * 1.15;
+      } else if (monthIndex == 6 || monthIndex == 7) {
+        // Mid-year sales (+10%)
+        projectedExpenses = projectedExpenses * 1.10;
+      }
+
+      // 3. DEBT PAYMENTS (may increase if struggling)
+      var projectedDebt = analysis.totalDebtPayments;
+
+      // If balance is critically low, debt burden feels heavier
+      if (runningBalance < 1000 && runningBalance > 0) {
+        // Simulate potential late fees or higher interest
+        projectedDebt = projectedDebt * 1.05;
+      } else if (runningBalance <= 0) {
+        // Critical: Can't pay full debt, DSR spikes
+        projectedDebt = projectedDebt * 1.10; // Penalties
+      }
+
+      // 4. CALCULATE DSR (changes based on income variations)
       final projectedDsr =
           projectedIncome > 0 ? (projectedDebt / projectedIncome) * 100 : 0.0;
 
-      // Calculate projected balance
+      // 5. CALCULATE PROJECTED BALANCE
       runningBalance =
           runningBalance + projectedIncome - projectedExpenses - projectedDebt;
 
-      // Determine status
+      // 6. DETERMINE STATUS
       final status = _calculateStatus(projectedDsr.toDouble(), runningBalance.toDouble());
 
       projections.add(MonthlyProjection(
