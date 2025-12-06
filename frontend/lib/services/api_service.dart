@@ -219,6 +219,8 @@ class ApiService {
     required double amount,
   }) async {
     try {
+      print('📤 Checking withdrawal: userExternalId=$userExternalId, amount=$amount');
+      
       final response = await http.post(
         Uri.parse('${ApiConfig.baseUrl}${ApiConfig.checkWithdrawalEndpoint}'),
         headers: ApiConfig.jsonHeaders,
@@ -228,17 +230,23 @@ class ApiService {
         }),
       );
 
+      print('📥 Check withdrawal response status: ${response.statusCode}');
+      print('📥 Check withdrawal response body: ${response.body}');
+
       final data = jsonDecode(response.body);
 
       if (response.statusCode == 200 && data['success'] == true) {
+        print('✅ Check withdrawal successful: $data');
         return data;
       } else {
+        print('❌ Check withdrawal failed: ${data['error']}');
         throw ApiException(
           message: data['error'] ?? 'Failed to check withdrawal',
           statusCode: response.statusCode,
         );
       }
     } catch (e) {
+      print('❌ Check withdrawal exception: $e');
       if (e is ApiException) rethrow;
       throw ApiException(message: 'Network error: $e');
     }

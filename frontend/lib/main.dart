@@ -523,7 +523,112 @@ class _SafeBalanceCard extends StatelessWidget {
     );
   }
 
-  void _showWithdrawDialog(BuildContext context) {
+  void _showWithdrawDialog(BuildContext context) async {
+    // First check safe balance status
+    final appState = Provider.of<AppState>(context, listen: false);
+    final safeBalance = appState.safeBalance;
+    
+    print('🔍 Checking safe balance before withdrawal...');
+    print('📊 Safe balance: ${safeBalance?.safeBalance}, Status: ${safeBalance?.status}');
+    
+    // If safe balance is CRITICAL (red), warn user first
+    if (safeBalance != null && safeBalance.status == 'CRITICAL') {
+      print('⚠️ Safe balance is CRITICAL - showing warning first');
+      
+      final shouldProceed = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => AlertDialog(
+          title: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: const [
+              Icon(Icons.warning_amber_rounded, color: Colors.red, size: 28),
+              SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  'Critical Balance Warning',
+                  style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  '⚠️ Your Safe Balance is CRITICAL',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                    color: Colors.red,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Current Balance: RM ${safeBalance.currentBalance.toStringAsFixed(2)}',
+                  style: const TextStyle(fontSize: 14),
+                ),
+                Text(
+                  'Safe to Spend: RM ${safeBalance.safeBalance.toStringAsFixed(2)}',
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.red,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'You have insufficient funds to cover your upcoming bills. Any withdrawal may put you at risk of missing payments.',
+                  style: TextStyle(fontSize: 13),
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'Do you still want to proceed with withdrawal?',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                print('❌ User cancelled at critical warning');
+                Navigator.pop(context, false);
+              },
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                print('✅ User chose to continue anyway');
+                Navigator.pop(context, true);
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+              ),
+              child: const Text('Continue Anyway'),
+            ),
+          ],
+        ),
+      );
+
+      // If user cancels, don't show withdraw dialog
+      if (shouldProceed != true) {
+        print('🚫 Withdrawal cancelled by user at critical warning stage');
+        return;
+      }
+      
+      print('➡️ User confirmed, showing withdrawal form...');
+    } else {
+      print('✅ Safe balance is OK (${safeBalance?.status}), proceeding directly to withdrawal form');
+    }
+
+    // Show the regular withdraw dialog
     final amountController = TextEditingController();
     final recipientController = TextEditingController();
     final descriptionController = TextEditingController();
@@ -587,33 +692,72 @@ class _SafeBalanceCard extends StatelessWidget {
 
             Navigator.pop(context);
 
+            // Small delay to allow dialog to close properly
+            await Future.delayed(const Duration(milliseconds: 100));
+
             // Check withdrawal first
             final appState = Provider.of<AppState>(context, listen: false);
-              try {
-                final checkResult = await appState.checkWithdrawal(amount);
-                final exceedsSafeBalance = checkResult['exceedsSafeBalance'] == true;
-                final safeBalance = checkResult['safeBalance'];
-                final canAfford = checkResult['canAfford'] == true;
+            try {
+              print('🔍 Checking withdrawal for amount: $amount');
+              final checkResult = await appState.checkWithdrawal(amount);
+              print('✅ Check result: $checkResult');
+              
+              final exceedsSafeBalance = checkResult['exceedsSafeBalance'] == true;
+              final safeBalance = checkResult['safeBalance'];
+              final canAfford = checkResult['canAfford'] == true;
+              
+              print('📊 Exceeds safe balance: $exceedsSafeBalance, Safe balance: $safeBalance, Can afford: $canAfford');
 
-                if (!canAfford) {
-                  // Insufficient balance
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Insufficient balance'),
-                        backgroundColor: Colors.red,
+              if (!canAfford) {
+                // Insufficient current balance
+                print('❌ Cannot afford - current balance insufficient');
+                if (context.mounted) {
+                  await showDialog(
+                    context: context,
+                    builder: (context) => AlertDialog(
+                      title: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: const [
+                          Icon(Icons.error, color: Colors.red, size: 24),
+                          SizedBox(width: 8),
+                          Text('Insufficient Balance'),
+                        ],
                       ),
-                    );
-                  }
-                  return;
+                      content: const Text(
+                        'You do not have enough balance to complete this withdrawal.',
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(context),
+                          child: const Text('OK'),
+                        ),
+                      ],
+                    ),
+                  );
                 }
+                return;
+              }
 
-                if (exceedsSafeBalance) {
-                  // Show warning confirmation dialog
-                  if (context.mounted) {
-                    final confirm = await showDialog<bool>(
-                      context: context,
-                      builder: (context) => AlertDialog(
+              // If safe balance is null or negative, or if amount exceeds safe balance, show warning
+              final shouldWarn = safeBalance == null || 
+                                 (safeBalance is num && safeBalance <= 0) || 
+                                 exceedsSafeBalance;
+              
+              if (shouldWarn) {
+                print('⚠️ Showing warning dialog... (safeBalance: $safeBalance)');
+                // Show warning confirmation dialog
+                if (context.mounted) {
+                  final safeBalanceDisplay = (safeBalance != null && safeBalance is num) 
+                      ? safeBalance.toStringAsFixed(2) 
+                      : '0.00';
+                  
+                  print('💬 About to show dialog...');
+                  final confirm = await showDialog<bool>(
+                    context: context,
+                    barrierDismissible: false, // User must tap a button
+                    builder: (context) {
+                      print('🏗️ Building warning dialog');
+                      return AlertDialog(
                         title: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: const [
@@ -633,7 +777,7 @@ class _SafeBalanceCard extends StatelessWidget {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                'This withdrawal (RM ${amount.toStringAsFixed(2)}) exceeds your safe balance (RM ${safeBalance.toStringAsFixed(2)}).',
+                                'This withdrawal (RM ${amount.toStringAsFixed(2)}) exceeds your safe balance (RM $safeBalanceDisplay).',
                                 style: const TextStyle(fontWeight: FontWeight.bold),
                               ),
                               const SizedBox(height: 12),
@@ -650,27 +794,40 @@ class _SafeBalanceCard extends StatelessWidget {
                         ),
                         actions: [
                           TextButton(
-                            onPressed: () => Navigator.pop(context, false),
+                            onPressed: () {
+                              print('❌ User tapped Cancel');
+                              Navigator.pop(context, false);
+                            },
                             child: const Text('Cancel'),
                           ),
                           ElevatedButton(
-                            onPressed: () => Navigator.pop(context, true),
+                            onPressed: () {
+                              print('✅ User tapped Proceed');
+                              Navigator.pop(context, true);
+                            },
                             style: ElevatedButton.styleFrom(
                               backgroundColor: Colors.orange,
                             ),
                             child: const Text('Proceed'),
                           ),
                         ],
-                      ),
-                    );
+                      );
+                    },
+                  );
+                  
+                  print('📤 Dialog returned: $confirm');
 
-                    if (confirm != true) {
-                      return; // User cancelled
-                    }
+                  if (confirm != true) {
+                    print('❌ User cancelled withdrawal');
+                    return; // User cancelled
                   }
+                  
+                  print('✅ User confirmed, proceeding...');
                 }
+              }
 
                 // Proceed with withdrawal
+                print('💸 Proceeding with withdrawal...');
                 final success = await appState.withdrawMoney(
                   amount,
                   recipientController.text,
@@ -690,6 +847,7 @@ class _SafeBalanceCard extends StatelessWidget {
                   );
                 }
               } catch (e) {
+                print('❌ Error in withdrawal flow: $e');
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(

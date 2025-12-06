@@ -755,7 +755,7 @@ app.post('/api/check-withdrawal', async (req: Request, res: Response) => {
     const currentBalance = parseFloat(user.current_balance);
 
     // Calculate safe balance
-    const safeBalanceResults = await pool.query(
+    const [safeBalanceResults] = await pool.query(
       `SELECT
         u.current_balance,
         (u.current_balance - COALESCE(SUM(pp.amount), 0)) AS safe_balance,
@@ -782,8 +782,13 @@ app.post('/api/check-withdrawal', async (req: Request, res: Response) => {
     }
     
     const safeBalanceData = safeBalanceResultsArray[0];
+    console.log(`📊 Safe balance data:`, safeBalanceData);
+    
     const safeBalance = parseFloat(safeBalanceData.safe_balance);
+    console.log(`💰 Current balance: ${currentBalance}, Safe balance: ${safeBalance}`);
+    
     const exceedsSafeBalance = amount > safeBalance;
+    console.log(`⚠️ Amount ${amount} > Safe balance ${safeBalance}? ${exceedsSafeBalance}`);
 
     res.json({
       success: true,
