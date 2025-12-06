@@ -8,6 +8,7 @@ import { existsSync } from "fs";
 import { randomUUID } from "node:crypto";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
+import { clearPromotionCache } from "./services/promotion-service.js";
 import { createMCPServer } from "./mcp-server.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { getRankedPromotions } from "./services/promotion-service.js";
@@ -703,6 +704,9 @@ app.post('/api/reload', async (req: Request, res: Response) => {
 
     console.log(`✅ Reload successful - New balance: RM ${newBalance}`);
 
+    // Clear promotion cache so next request gets fresh rankings
+    clearPromotionCache(userExternalId);
+
     res.json({
       success: true,
       transaction: {
@@ -907,6 +911,9 @@ app.post('/api/withdraw', async (req: Request, res: Response) => {
     );
 
     console.log(`✅ Withdrawal successful - New balance: RM ${newBalance}`);
+
+    // Clear promotion cache so next request gets fresh rankings
+    clearPromotionCache(userExternalId);
 
     res.json({
       success: true,

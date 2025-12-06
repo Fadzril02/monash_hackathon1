@@ -38,8 +38,8 @@ class PromotionCard extends StatelessWidget {
                       topLeft: Radius.circular(12),
                       topRight: Radius.circular(12),
                     ),
-                    child: Image.network(
-                      promotion.imageUrl!,
+                    child: Image.asset(
+                      'assets/images/promotions/${promotion.imageUrl}',
                       fit: BoxFit.cover,
                       errorBuilder: (context, error, stackTrace) {
                         return const Center(

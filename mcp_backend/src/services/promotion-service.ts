@@ -157,10 +157,12 @@ async function rankPromotionsWithAI(
   const systemPrompt = `You are a financial assistant. Your task is to rank promotions based on the user's financial situation.
 
 Ranking Guidelines:
-- **Low 'Safe to Spend' balance (< 30% of current balance or CRITICAL status):** Prioritize promotions that offer cost savings or flexible payments (e.g., 'bnpl', 'cashback').
+- **CRITICAL/RED status (Safe Balance < 0 or negative):** MANDATORY - ALWAYS prioritize BNPL promotions FIRST, followed by cashback. This is a DEMO requirement - BNPL must be #1 for CRITICAL status.
+- **Low 'Safe to Spend' balance (< 30% of current balance or WARNING status):** Prioritize promotions that offer cost savings (e.g., 'cashback', then 'bnpl').
 - **High 'Safe to Spend' balance (> 30% of current balance or HEALTHY status):** Prioritize 'premium_perk' and high-value 'voucher' promotions.
 - **Good financial habits (low DSR, on-time payments):** Reward users with relevant offers like cashback on timely BNPL payments.
-- **WARNING status:** Balance between cashback/BNPL and premium perks based on specific amounts.
+
+CRITICAL RULE: If status is 'CRITICAL', put ALL 'bnpl' type promotions at the TOP of the list, then cashback, then others.
 
 Return the full list of promotions as a JSON array, sorted from most to least relevant. Each promotion should maintain all its original fields.`;
 
@@ -175,14 +177,16 @@ User Financial Summary:
 - Average Monthly Expenses: RM ${userFinancialSummary.avg_monthly_expenses.toFixed(2)}
 - Debt Service Ratio: ${userFinancialSummary.current_dsr.toFixed(1)}% (${userFinancialSummary.dsr_status})
 
+${userFinancialSummary.status === 'CRITICAL' ? '⚠️ CRITICAL STATUS DETECTED - MANDATORY: Place ALL BNPL promotions (promotion_type: "bnpl") at the TOP of the ranking list!' : ''}
+
 Promotions to rank:
 ${JSON.stringify(promotions, null, 2)}
 
-Return ONLY a valid JSON array of promotions, sorted from most to least relevant. Maintain all original fields from each promotion.`;
+Return ONLY a valid JSON array of promotions, sorted from most to least relevant. ${userFinancialSummary.status === 'CRITICAL' ? 'REMEMBER: BNPL promotions MUST be ranked first for CRITICAL status!' : 'Maintain all original fields from each promotion.'}`;
 
-  // Use Claude Sonnet model for ranking (better quality than Haiku)
+  // Use Claude Haiku 4.5 model for promotion ranking (faster for demo)
   const response = await anthropic.messages.create({
-    model: 'claude-sonnet-4-20250514',
+    model: 'claude-haiku-4-5-20251001',
     max_tokens: 4096,
     system: systemPrompt,
     messages: [{
@@ -214,40 +218,67 @@ Return ONLY a valid JSON array of promotions, sorted from most to least relevant
     return promotions.map(p => ({ ...p }));
   }
 
+  // DEMO REQUIREMENT: Force BNPL to top for CRITICAL status
+  if (userFinancialSummary.status === 'CRITICAL') {
+    console.log('🎯 CRITICAL status detected - Enforcing BNPL first policy');
+    
+    // Separate BNPL and non-BNPL promotions
+    const bnplPromotions = rankedPromotions.filter(p => p.promotion_type === 'bnpl');
+    const otherPromotions = rankedPromotions.filter(p => p.promotion_type !== 'bnpl');
+    
+    // Put BNPL first, then others
+    rankedPromotions = [...bnplPromotions, ...otherPromotions];
+    
+    console.log(`✅ Reordered: ${bnplPromotions.length} BNPL promotions placed at top`);
+  }
+
   return rankedPromotions;
 }
 
 /**
  * Get ranked promotions for a user
+ * CACHED PER SESSION - Clears cache on each query, MCP does selection
  */
-// Simple in-memory cache for rankings (5 minute TTL)
-const rankingCache = new Map<string, { data: RankedPromotion[]; timestamp: number }>();
-const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+// Simple in-memory cache for rankings
+const rankingCache = new Map<string, { data: RankedPromotion[]; safeBalance: number; status: string; timestamp: number }>();
+const CACHE_TTL = 60 * 1000; // 1 minute - short cache to simulate "per session"
 
-export async function getRankedPromotions(userExternalId: string): Promise<RankedPromotion[]> {
+export async function getRankedPromotions(userExternalId: string, forceRefresh = false): Promise<RankedPromotion[]> {
   const pool = createDbConnection();
 
   try {
-    // Check cache first
-    const cacheKey = userExternalId;
-    const cached = rankingCache.get(cacheKey);
-    if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
-      console.log(`✅ Using cached rankings for ${userExternalId}`);
+    // Check if we should use cached data
+    const cached = rankingCache.get(userExternalId);
+    const cacheValid = cached && !forceRefresh && (Date.now() - cached.timestamp < CACHE_TTL);
+    
+    if (cacheValid) {
+      console.log(`✅ Using cached rankings for ${userExternalId} (Safe Balance: RM ${cached.safeBalance.toFixed(2)}, Status: ${cached.status})`);
       return cached.data;
     }
+    
+    if (forceRefresh) {
+      console.log(`🔄 Force refresh requested for ${userExternalId}`);
+    } else {
+      console.log(`🔄 Cache expired or not found, fetching fresh rankings for ${userExternalId}...`);
+    }
+    
+    // 1. Fetch user's current financial summary
+    const userFinancialSummary = await getUserFinancialSummary(pool, userExternalId);
+    const currentSafeBalance = userFinancialSummary.safeBalance ?? 0;
+    const currentStatus = userFinancialSummary.status;
+    
+    console.log(`📊 Current financial status: Safe Balance RM ${currentSafeBalance.toFixed(2)}, Status: ${currentStatus}`);
 
-    // 1. Fetch user's financial summary and promotions in parallel
-    const [userFinancialSummary, promotions] = await Promise.all([
-      getUserFinancialSummary(pool, userExternalId),
-      getAllActivePromotions(pool)
-    ]);
+    // 2. Fetch all active promotions
+    const promotions = await getAllActivePromotions(pool);
 
     if (promotions.length === 0) {
+      console.log('⚠️ No active promotions available');
       return [];
     }
 
-    // 2. Rank promotions using AI (this is the slowest part)
-    console.log(`🤖 Ranking ${promotions.length} promotions for ${userExternalId}...`);
+    // 3. Rank promotions using AI/MCP based on current financial situation
+    console.log(`🤖 Ranking ${promotions.length} promotions using AI/MCP...`);
     const startTime = Date.now();
     const rankedPromotions = await rankPromotionsWithAI(
       promotions,
@@ -257,8 +288,15 @@ export async function getRankedPromotions(userExternalId: string): Promise<Ranke
     const duration = Date.now() - startTime;
     console.log(`✅ Ranking completed in ${duration}ms`);
 
-    // Cache the results
-    rankingCache.set(cacheKey, { data: rankedPromotions, timestamp: Date.now() });
+    // Cache the results with timestamp
+    rankingCache.set(userExternalId, {
+      data: rankedPromotions,
+      safeBalance: currentSafeBalance,
+      status: currentStatus,
+      timestamp: Date.now()
+    });
+    
+    console.log(`💾 Cached rankings for ${userExternalId} (TTL: ${CACHE_TTL/1000}s)`);
 
     return rankedPromotions;
   } catch (error) {
@@ -267,5 +305,13 @@ export async function getRankedPromotions(userExternalId: string): Promise<Ranke
   } finally {
     await pool.end();
   }
+}
+
+/**
+ * Clear cache for a user (call after reload/withdraw to invalidate)
+ */
+export function clearPromotionCache(userExternalId: string): void {
+  rankingCache.delete(userExternalId);
+  console.log(`🗑️ Cleared promotion cache for ${userExternalId}`);
 }
 

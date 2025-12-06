@@ -45,6 +45,7 @@ class RytGuardHomePage extends StatefulWidget {
 
 class _RytGuardHomePageState extends State<RytGuardHomePage> {
   int _selectedIndex = 0;
+  final GlobalKey<_PromotionBannerState> _promotionBannerKey = GlobalKey<_PromotionBannerState>();
 
   @override
   Widget build(BuildContext context) {
@@ -98,7 +99,9 @@ class _RytGuardHomePageState extends State<RytGuardHomePage> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          _PromotionBanner(),
+                          _PromotionBanner(
+                            key: _promotionBannerKey,
+                          ),
                           const SizedBox(height: 20),
                           const _SafeBalanceCard(),
                           const SizedBox(height: 20),
@@ -506,6 +509,13 @@ class _SafeBalanceCard extends StatelessWidget {
               );
 
               if (context.mounted) {
+                // Refresh promotion banner after successful reload
+                if (success) {
+                  // Find the ancestor state and refresh banner
+                  final homePageState = context.findAncestorStateOfType<_RytGuardHomePageState>();
+                  homePageState?._promotionBannerKey.currentState?.refresh();
+                }
+                
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     content: Text(success
@@ -837,6 +847,13 @@ class _SafeBalanceCard extends StatelessWidget {
                 );
 
                 if (context.mounted) {
+                  // Refresh promotion banner after successful withdrawal
+                  if (success) {
+                    // Find the ancestor state and refresh banner
+                    final homePageState = context.findAncestorStateOfType<_RytGuardHomePageState>();
+                    homePageState?._promotionBannerKey.currentState?.refresh();
+                  }
+                  
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
                       content: Text(success
@@ -1727,17 +1744,20 @@ class _QuickActionChip extends StatelessWidget {
 
 // --- PROMOTION BANNER ---
 class _PromotionBanner extends StatefulWidget {
-  const _PromotionBanner();
+  const _PromotionBanner({Key? key}) : super(key: key);
 
   @override
   State<_PromotionBanner> createState() => _PromotionBannerState();
 }
 
-class _PromotionBannerState extends State<_PromotionBanner> {
+class _PromotionBannerState extends State<_PromotionBanner> with AutomaticKeepAliveClientMixin {
   final ApiService _apiService = ApiService();
   final String _userExternalId = ApiConfig.defaultUserExternalId;
   Promotion? _topPromotion;
   bool _isLoading = true;
+
+  @override
+  bool get wantKeepAlive => true; // Keep state alive when navigating away
 
   @override
   void initState() {
@@ -1745,24 +1765,59 @@ class _PromotionBannerState extends State<_PromotionBanner> {
     _loadTopPromotion();
   }
 
+  @override
+  void didUpdateWidget(_PromotionBanner oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Don't reload on widget updates - only manual refresh
+  }
+
+  @override
+  void dispose() {
+    // Clean up
+    super.dispose();
+  }
+
+  // Public method to refresh the promotion (called after reload/withdraw)
+  void refresh() {
+    print('🔄 Manual refresh triggered for promotion banner');
+    _loadTopPromotion();
+  }
+
   Future<void> _loadTopPromotion() async {
+    // Check if widget is still mounted before starting
+    if (!mounted) return;
+    
+    setState(() {
+      _isLoading = true;
+    });
+    
     try {
+      print('📊 Loading top promotion based on current safe balance...');
       final promotions = await _apiService.getPromotions(
         userExternalId: _userExternalId,
       );
 
+      // Check if widget is still mounted after async operation
+      if (!mounted) return;
+
       if (promotions.isNotEmpty) {
+        print('✅ Loaded ${promotions.length} promotions, showing top: ${promotions[0].title}');
         setState(() {
           _topPromotion = promotions[0]; // First promotion is the top-ranked one
           _isLoading = false;
         });
       } else {
+        print('⚠️ No promotions available');
         setState(() {
           _isLoading = false;
         });
       }
     } catch (e) {
-      print('Error loading top promotion: $e');
+      print('❌ Error loading top promotion: $e');
+      
+      // Check if widget is still mounted before calling setState
+      if (!mounted) return;
+      
       setState(() {
         _isLoading = false;
       });
@@ -1771,11 +1826,19 @@ class _PromotionBannerState extends State<_PromotionBanner> {
 
   @override
   Widget build(BuildContext context) {
+    // Hide banner completely while loading or if no promotion available
     if (_isLoading || _topPromotion == null) {
-      return const SizedBox.shrink();
+      print('🙈 Promotion banner hidden (loading: $_isLoading, hasPromotion: ${_topPromotion != null})');
+      return const SizedBox.shrink(); // Completely invisible, takes no space
     }
 
-    return GestureDetector(
+    print('✨ Showing promotion banner: ${_topPromotion!.title}');
+    
+    // Animate the banner appearance
+    return AnimatedOpacity(
+      opacity: _topPromotion != null ? 1.0 : 0.0,
+      duration: const Duration(milliseconds: 300),
+      child: GestureDetector(
       onTap: () {
         // Navigate to PromotionsPage by changing the selected index
         final homePageState = context.findAncestorStateOfType<_RytGuardHomePageState>();
@@ -1883,6 +1946,7 @@ class _PromotionBannerState extends State<_PromotionBanner> {
           ],
         ),
       ),
-    );
+      ), // Close GestureDetector
+    ); // Close AnimatedOpacity
   }
 }
