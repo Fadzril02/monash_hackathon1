@@ -7,6 +7,7 @@ import '../models/safe_balance.dart';
 import '../models/chat_message.dart';
 import '../models/api_exception.dart';
 import '../models/financial_analysis.dart';
+import '../models/promotion.dart';
 
 class ApiService {
   /// Check if backend server is healthy
@@ -200,19 +201,40 @@ class ApiService {
 
       if (response.statusCode == 200 && data['success'] == true) {
         return Transaction.fromJson(data['transaction']);
-      } else if (response.statusCode == 400 &&
-          data['safeBalance'] != null &&
-          data['requestedAmount'] != null) {
-        // Safe balance error
-        throw SafeBalanceException(
-          message: data['error'] ?? 'Insufficient safe balance',
-          safeBalance: double.parse(data['safeBalance'].toString()),
-          requestedAmount: double.parse(data['requestedAmount'].toString()),
-          statusCode: response.statusCode,
-        );
       } else {
         throw ApiException(
           message: data['error'] ?? 'Failed to withdraw money',
+          statusCode: response.statusCode,
+        );
+      }
+    } catch (e) {
+      if (e is ApiException) rethrow;
+      throw ApiException(message: 'Network error: $e');
+    }
+  }
+
+  /// Check if withdrawal would exceed safe balance
+  Future<Map<String, dynamic>> checkWithdrawal({
+    required String userExternalId,
+    required double amount,
+  }) async {
+    try {
+      final response = await http.post(
+        Uri.parse('${ApiConfig.baseUrl}${ApiConfig.checkWithdrawalEndpoint}'),
+        headers: ApiConfig.jsonHeaders,
+        body: jsonEncode({
+          'userExternalId': userExternalId,
+          'amount': amount,
+        }),
+      );
+
+      final data = jsonDecode(response.body);
+
+      if (response.statusCode == 200 && data['success'] == true) {
+        return data;
+      } else {
+        throw ApiException(
+          message: data['error'] ?? 'Failed to check withdrawal',
           statusCode: response.statusCode,
         );
       }
@@ -399,6 +421,60 @@ class ApiService {
     } catch (e) {
       if (e is ApiException) rethrow;
       throw ApiException(message: 'Network error: Unable to connect to AI assistant. $e');
+    }
+  }
+
+  /// Get ranked promotions for a user
+  Future<List<Promotion>> getPromotions({
+    required String userExternalId,
+  }) async {
+    try {
+      final uri = Uri.parse(
+          '${ApiConfig.baseUrl}${ApiConfig.promotionsEndpoint}?userExternalId=$userExternalId');
+
+      print('📡 Fetching promotions from: $uri');
+
+      final response = await http.get(uri);
+
+      print('📥 Promotions response status: ${response.statusCode}');
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data['success'] == true) {
+          final List<dynamic> promotionsList = data['promotions'] ?? [];
+          print('✅ Parsing ${promotionsList.length} promotions...');
+
+          final promotions = <Promotion>[];
+          for (var i = 0; i < promotionsList.length; i++) {
+            try {
+              final promo = Promotion.fromJson(promotionsList[i]);
+              promotions.add(promo);
+            } catch (e) {
+              print('❌ Failed to parse promotion $i: $e');
+            }
+          }
+
+          print('✅ Successfully parsed ${promotions.length} promotions');
+          return promotions;
+        } else {
+          throw ApiException(
+            message: data['error'] ?? 'Failed to load promotions',
+            statusCode: response.statusCode,
+          );
+        }
+      } else {
+        final error = jsonDecode(response.body);
+        throw ApiException(
+          message: error['error'] ?? 'Failed to load promotions',
+          statusCode: response.statusCode,
+        );
+      }
+    } catch (e) {
+      print('❌ getPromotions error: $e');
+      if (e is ApiException) rethrow;
+      throw ApiException(
+        message: 'Network error: Unable to connect to server. $e',
+      );
     }
   }
 }

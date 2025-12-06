@@ -10,6 +10,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { createMCPServer } from "./mcp-server.js";
 import Anthropic from "@anthropic-ai/sdk";
+import { getRankedPromotions } from "./services/promotion-service.js";
 
 import type { Request, Response } from "express";
 
@@ -311,6 +312,31 @@ const BANKING_TOOLS: Anthropic.Tool[] = [
       },
       required: ['user_external_id']
     }
+  },
+  {
+    name: 'rank-promotions',
+    description: 'Rank promotions based on user\'s financial situation and spending habits. Returns promotions sorted from most to least relevant.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        user_external_id: {
+          type: 'string',
+          description: 'External user ID (e.g., john_doe_001)'
+        },
+        promotions: {
+          type: 'array',
+          description: 'List of promotions to rank',
+          items: {
+            type: 'object'
+          }
+        },
+        user_financial_summary: {
+          type: 'object',
+          description: 'User\'s financial summary for ranking context'
+        }
+      },
+      required: ['user_external_id', 'promotions', 'user_financial_summary']
+    }
   }
 ];
 
@@ -331,11 +357,33 @@ async function executeMCPTool(toolName: string, toolInput: any): Promise<any> {
 
   try {
     if (toolName === 'get-safe-balance') {
-      // MySQL uses CALL for stored procedures
-      const query = `CALL calculate_safe_balance(?, ?);`;
+      // Use direct SQL query instead of stored procedure CALL (TiDB MCP compatibility)
+      const query = `SELECT
+        u.current_balance,
+        COALESCE(SUM(pp.amount), 0) AS upcoming_liabilities,
+        (u.current_balance - COALESCE(SUM(pp.amount), 0)) AS safe_balance,
+        CASE
+          WHEN u.current_balance - COALESCE(SUM(pp.amount), 0) > u.current_balance * 0.3 THEN 'HEALTHY'
+          WHEN u.current_balance - COALESCE(SUM(pp.amount), 0) > 0 THEN 'WARNING'
+          ELSE 'CRITICAL'
+        END AS status,
+        COUNT(pp.payment_id) AS upcoming_count,
+        MIN(pp.payment_date) AS next_payment_date,
+        (SELECT amount FROM projected_payments
+         WHERE user_id = ?
+         AND payment_status = 'UNPAID'
+         AND payment_date >= CURRENT_DATE
+         ORDER BY payment_date LIMIT 1) AS next_payment_amount
+      FROM users u
+      LEFT JOIN projected_payments pp ON u.user_id = pp.user_id
+        AND pp.payment_date BETWEEN CURRENT_DATE AND DATE_ADD(CURRENT_DATE, INTERVAL ? DAY)
+        AND pp.payment_status = 'UNPAID'
+      WHERE u.user_id = ?
+      GROUP BY u.user_id, u.current_balance`;
       console.log(`🔧 Executing tool: ${toolName}`);
-      const [results] = await pool.query(query, [userUuid, lookaheadDays]);
-      return Array.isArray(results) && results[0] && Array.isArray(results[0]) ? results[0][0] : results[0];
+      const [results] = await pool.query(query, [userUuid, lookaheadDays, userUuid]);
+      const resultsArray = results as any[];
+      return resultsArray && resultsArray.length > 0 ? resultsArray[0] : null;
     } else if (toolName === 'get-upcoming-bills') {
       const query = `
         SELECT * FROM v_upcoming_payments_30days
@@ -354,10 +402,28 @@ async function executeMCPTool(toolName: string, toolInput: any): Promise<any> {
         bills: billRows
       };
     } else if (toolName === 'check-affordability') {
-      // First get safe balance
-      const balanceQuery = `CALL calculate_safe_balance(?, ?);`;
-      const [balanceResults] = await pool.query(balanceQuery, [userUuid, lookaheadDays]);
-      const balance = Array.isArray(balanceResults) && balanceResults[0] && Array.isArray(balanceResults[0]) ? balanceResults[0][0] : balanceResults[0];
+      // First get safe balance using direct SQL query
+      const balanceQuery = `SELECT
+        u.current_balance,
+        COALESCE(SUM(pp.amount), 0) AS upcoming_liabilities,
+        (u.current_balance - COALESCE(SUM(pp.amount), 0)) AS safe_balance,
+        CASE
+          WHEN u.current_balance - COALESCE(SUM(pp.amount), 0) > u.current_balance * 0.3 THEN 'HEALTHY'
+          WHEN u.current_balance - COALESCE(SUM(pp.amount), 0) > 0 THEN 'WARNING'
+          ELSE 'CRITICAL'
+        END AS status
+      FROM users u
+      LEFT JOIN projected_payments pp ON u.user_id = pp.user_id
+        AND pp.payment_date BETWEEN CURRENT_DATE AND DATE_ADD(CURRENT_DATE, INTERVAL ? DAY)
+        AND pp.payment_status = 'UNPAID'
+      WHERE u.user_id = ?
+      GROUP BY u.user_id, u.current_balance`;
+      const [balanceResults] = await pool.query(balanceQuery, [lookaheadDays, userUuid]);
+      const balanceResultsArray = balanceResults as any[];
+      if (!balanceResultsArray || balanceResultsArray.length === 0) {
+        throw new Error('Could not calculate safe balance');
+      }
+      const balance = balanceResultsArray[0];
       const safeBalance = parseFloat(balance.safe_balance);
       const purchaseAmount = toolInput.purchase_amount;
 
@@ -659,6 +725,84 @@ app.post('/api/reload', async (req: Request, res: Response) => {
   }
 });
 
+// Check safe balance before withdrawal
+app.post('/api/check-withdrawal', async (req: Request, res: Response) => {
+  try {
+    const { userExternalId, amount } = req.body;
+
+    // Validation
+    if (!userExternalId) {
+      return res.status(400).json({ error: 'User ID is required', success: false });
+    }
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ error: 'Amount must be greater than 0', success: false });
+    }
+
+    console.log(`🔍 Checking withdrawal - User: ${userExternalId}, Amount: RM ${amount}`);
+
+    // Get user
+    const [userRows] = await pool.query(
+      'SELECT user_id, current_balance FROM users WHERE external_user_id = ?',
+      [userExternalId]
+    );
+
+    if (!Array.isArray(userRows) || userRows.length === 0) {
+      return res.status(404).json({ error: 'User not found', success: false });
+    }
+
+    const user = userRows[0] as any;
+    const userId = user.user_id;
+    const currentBalance = parseFloat(user.current_balance);
+
+    // Calculate safe balance
+    const safeBalanceResults = await pool.query(
+      `SELECT
+        u.current_balance,
+        (u.current_balance - COALESCE(SUM(pp.amount), 0)) AS safe_balance,
+        CASE
+          WHEN u.current_balance - COALESCE(SUM(pp.amount), 0) > u.current_balance * 0.3 THEN 'HEALTHY'
+          WHEN u.current_balance - COALESCE(SUM(pp.amount), 0) > 0 THEN 'WARNING'
+          ELSE 'CRITICAL'
+        END AS status
+      FROM users u
+      LEFT JOIN projected_payments pp ON u.user_id = pp.user_id
+        AND pp.payment_date BETWEEN CURRENT_DATE AND DATE_ADD(CURRENT_DATE, INTERVAL 30 DAY)
+        AND pp.payment_status = 'UNPAID'
+      WHERE u.user_id = ?
+      GROUP BY u.user_id, u.current_balance`,
+      [userId]
+    );
+    
+    const safeBalanceResultsArray = safeBalanceResults as any[];
+    if (!safeBalanceResultsArray || safeBalanceResultsArray.length === 0) {
+      return res.status(500).json({
+        error: 'Could not calculate safe balance',
+        success: false
+      });
+    }
+    
+    const safeBalanceData = safeBalanceResultsArray[0];
+    const safeBalance = parseFloat(safeBalanceData.safe_balance);
+    const exceedsSafeBalance = amount > safeBalance;
+
+    res.json({
+      success: true,
+      currentBalance: currentBalance,
+      safeBalance: safeBalance,
+      requestedAmount: amount,
+      exceedsSafeBalance: exceedsSafeBalance,
+      canAfford: amount <= currentBalance
+    });
+
+  } catch (error: any) {
+    console.error('❌ Check withdrawal error:', error.message);
+    res.status(500).json({
+      error: error.message,
+      success: false
+    });
+  }
+});
+
 // Withdraw Money endpoint
 app.post('/api/withdraw', async (req: Request, res: Response) => {
   try {
@@ -690,31 +834,50 @@ app.post('/api/withdraw', async (req: Request, res: Response) => {
     const user = (userRows as any[])[0];
     const userId = user.user_id;
 
-    // Calculate safe balance
+    // Calculate safe balance using direct SQL query (replaces stored procedure CALL)
+    // This avoids "Unsupported type *ast.CallStmt" error from TiDB MCP server
     const [safeBalanceResults] = await pool.query(
-      'CALL calculate_safe_balance(?, 30)',
+      `SELECT
+        u.current_balance,
+        COALESCE(SUM(pp.amount), 0) AS upcoming_liabilities,
+        (u.current_balance - COALESCE(SUM(pp.amount), 0)) AS safe_balance,
+        CASE
+          WHEN u.current_balance - COALESCE(SUM(pp.amount), 0) > u.current_balance * 0.3 THEN 'HEALTHY'
+          WHEN u.current_balance - COALESCE(SUM(pp.amount), 0) > 0 THEN 'WARNING'
+          ELSE 'CRITICAL'
+        END AS status
+      FROM users u
+      LEFT JOIN projected_payments pp ON u.user_id = pp.user_id
+        AND pp.payment_date BETWEEN CURRENT_DATE AND DATE_ADD(CURRENT_DATE, INTERVAL 30 DAY)
+        AND pp.payment_status = 'UNPAID'
+      WHERE u.user_id = ?
+      GROUP BY u.user_id, u.current_balance`,
       [userId]
     );
-    const safeBalanceData = Array.isArray(safeBalanceResults) && safeBalanceResults[0] && Array.isArray(safeBalanceResults[0]) ? safeBalanceResults[0][0] : safeBalanceResults[0];
+    
+    const safeBalanceResultsArray = safeBalanceResults as any[];
+    if (!safeBalanceResultsArray || safeBalanceResultsArray.length === 0) {
+      return res.status(500).json({
+        error: 'Could not calculate safe balance',
+        success: false
+      });
+    }
+    
+    const safeBalanceData = safeBalanceResultsArray[0];
     const safeBalance = parseFloat(safeBalanceData.safe_balance);
     const currentBalance = parseFloat(safeBalanceData.current_balance);
 
-    // Check if withdrawal exceeds safe balance
-    if (amount > safeBalance) {
-      console.log(`❌ Withdrawal blocked - Amount (${amount}) exceeds safe balance (${safeBalance})`);
-      return res.status(400).json({
-        error: `Insufficient safe balance. Your safe balance is RM ${safeBalance.toFixed(2)}. This withdrawal would leave you unable to pay your upcoming bills.`,
-        success: false,
-        safeBalance: safeBalance,
-        requestedAmount: amount
-      });
+    // Check if withdrawal exceeds safe balance - just log warning, don't block
+    const exceedsSafeBalance = amount > safeBalance;
+    if (exceedsSafeBalance) {
+      console.log(`⚠️ Withdrawal warning - Amount (${amount}) exceeds safe balance (${safeBalance})`);
     }
 
     const newBalance = currentBalance - amount;
 
     // Create transaction record
     const transactionId = `withdraw_${Date.now()}_${Math.random().toString(36).substring(7)}`;
-    const [transactionResult] = await pool.query(
+    await pool.query(
       `INSERT INTO transactions
        (transaction_id, user_id, external_transaction_id, amount, transaction_type, description, merchant_name,
         category, balance_after, transaction_date, status)
@@ -743,14 +906,18 @@ app.post('/api/withdraw', async (req: Request, res: Response) => {
     res.json({
       success: true,
       transaction: {
-        id: transactionResult.rows[0].external_transaction_id,
+        id: transactionId,
         amount: amount,
         type: 'DEBIT',
         recipientName: recipientName,
         description: description || `Withdrawal to ${recipientName}`,
-        date: transactionResult.rows[0].transaction_date,
+        date: new Date().toISOString(),
         previousBalance: currentBalance,
         newBalance: newBalance
+      },
+      safeBalanceInfo: {
+        safeBalance: safeBalance,
+        exceedsSafeBalance: exceedsSafeBalance
       }
     });
 
@@ -953,6 +1120,36 @@ app.post('/api/cancel-subscription', async (req: Request, res: Response) => {
 
   } catch (error: any) {
     console.error('❌ Cancel subscription error:', error.message);
+    res.status(500).json({
+      error: error.message,
+      success: false
+    });
+  }
+});
+
+// Get ranked promotions for a user
+app.get('/api/promotions', async (req: Request, res: Response) => {
+  try {
+    const userExternalId = req.query.userExternalId as string;
+
+    if (!userExternalId) {
+      return res.status(400).json({ error: 'User ID is required', success: false });
+    }
+
+    console.log(`🎁 Fetching ranked promotions for user: ${userExternalId}`);
+
+    const rankedPromotions = await getRankedPromotions(userExternalId);
+
+    console.log(`✅ Found ${rankedPromotions.length} ranked promotions`);
+
+    res.json({
+      success: true,
+      promotions: rankedPromotions,
+      count: rankedPromotions.length
+    });
+
+  } catch (error: any) {
+    console.error('❌ Error fetching promotions:', error.message);
     res.status(500).json({
       error: error.message,
       success: false

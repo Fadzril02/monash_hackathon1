@@ -7,6 +7,7 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "test:connection": "node test-connection.js",
+    "setup:promotions": "node setup-promotions.js",
     "build": "node --max-old-space-size=4096 ./node_modules/typescript/bin/tsc",
     "start": "node dist/server.js",
     "dev": "tsx watch src/server.ts",

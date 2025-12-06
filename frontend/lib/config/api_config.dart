@@ -22,9 +22,11 @@ class ApiConfig {
   static const String chatEndpoint = '/api/chat';
   static const String reloadEndpoint = '/api/reload';
   static const String withdrawEndpoint = '/api/withdraw';
+  static const String checkWithdrawalEndpoint = '/api/check-withdrawal';
   static const String subscriptionsEndpoint = '/api/subscriptions';
   static const String addSubscriptionEndpoint = '/api/add-subscription';
   static const String cancelSubscriptionEndpoint = '/api/cancel-subscription';
+  static const String promotionsEndpoint = '/api/promotions';
   static const String queryEndpoint = '/api/query';
 
   /// Headers

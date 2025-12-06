@@ -129,6 +129,18 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// Check if withdrawal would exceed safe balance
+  Future<Map<String, dynamic>> checkWithdrawal(double amount) async {
+    try {
+      return await _apiService.checkWithdrawal(
+        userExternalId: userExternalId,
+        amount: amount,
+      );
+    } catch (e) {
+      throw e;
+    }
+  }
+
   /// Withdraw money
   Future<bool> withdrawMoney(
     double amount,
@@ -153,11 +165,6 @@ class AppState extends ChangeNotifier {
       _isLoading = false;
       notifyListeners();
       return true;
-    } on SafeBalanceException catch (e) {
-      _errorMessage = e.toString();
-      _isLoading = false;
-      notifyListeners();
-      return false;
     } catch (e) {
       _errorMessage = e is ApiException ? e.message : 'Failed to withdraw: $e';
       _isLoading = false;

@@ -6,6 +6,10 @@ import 'models/subscription.dart';
 import 'models/chat_message.dart';
 import 'widgets/prediction_dashboard.dart';
 import 'widgets/what_if_dialog.dart';
+import 'widgets/promotions_page.dart';
+import 'services/api_service.dart';
+import 'models/promotion.dart';
+import 'config/api_config.dart';
 
 void main() {
   runApp(const RytGuardApp());
@@ -23,6 +27,8 @@ class RytGuardApp extends StatelessWidget {
         theme: ThemeData(
           scaffoldBackgroundColor: const Color(0xFFF8FAFC),
           useMaterial3: true,
+          fontFamily: 'Arial', // Set default font family
+          fontFamilyFallback: const ['Roboto', 'sans-serif'], // Fallback fonts
         ),
         home: const RytGuardHomePage(),
       ),
@@ -92,6 +98,8 @@ class _RytGuardHomePageState extends State<RytGuardHomePage> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
+                          _PromotionBanner(),
+                          const SizedBox(height: 20),
                           const _SafeBalanceCard(),
                           const SizedBox(height: 20),
                           const _ChatbotWidget(),
@@ -113,6 +121,8 @@ class _RytGuardHomePageState extends State<RytGuardHomePage> {
                   ),
                 ],
               ),
+              // Promotions Page
+              const PromotionsPage(),
             ],
           ),
           floatingActionButton: _selectedIndex == 1
@@ -144,6 +154,10 @@ class _RytGuardHomePageState extends State<RytGuardHomePage> {
               BottomNavigationBarItem(
                 icon: Icon(Icons.trending_up),
                 label: 'Predictions',
+              ),
+              BottomNavigationBarItem(
+                icon: Icon(Icons.local_offer),
+                label: 'Promotions',
               ),
             ],
           ),
@@ -436,17 +450,18 @@ class _SafeBalanceCard extends StatelessWidget {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Reload Money'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: amountController,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText: 'Amount (RM)',
-                hintText: 'e.g., 1000',
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: amountController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Amount (RM)',
+                  hintText: 'e.g., 1000',
+                ),
               ),
-            ),
             const SizedBox(height: 16),
             TextField(
               controller: descriptionController,
@@ -457,25 +472,26 @@ class _SafeBalanceCard extends StatelessWidget {
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              final amount = double.tryParse(amountController.text);
-              if (amount == null || amount <= 0) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Please enter a valid amount')),
-                );
-                return;
-              }
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          onPressed: () async {
+            final amount = double.tryParse(amountController.text);
+            if (amount == null || amount <= 0) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Please enter a valid amount')),
+              );
+              return;
+            }
 
-              Navigator.pop(context);
+            Navigator.pop(context);
 
-              final appState = Provider.of<AppState>(context, listen: false);
-              final success = await appState.reloadMoney(
+            final appState = Provider.of<AppState>(context, listen: false);
+            final success = await appState.reloadMoney(
                 amount,
                 description: descriptionController.text.isEmpty
                     ? null
@@ -509,17 +525,18 @@ class _SafeBalanceCard extends StatelessWidget {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Withdraw Money'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: amountController,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText: 'Amount (RM)',
-                hintText: 'e.g., 500',
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: amountController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Amount (RM)',
+                  hintText: 'e.g., 500',
+                ),
               ),
-            ),
             const SizedBox(height: 16),
             TextField(
               controller: recipientController,
@@ -538,48 +555,142 @@ class _SafeBalanceCard extends StatelessWidget {
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              final amount = double.tryParse(amountController.text);
-              if (amount == null || amount <= 0) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Please enter a valid amount')),
-                );
-                return;
-              }
-
-              if (recipientController.text.isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Please enter recipient name')),
-                );
-                return;
-              }
-
-              Navigator.pop(context);
-
-              final appState = Provider.of<AppState>(context, listen: false);
-              final success = await appState.withdrawMoney(
-                amount,
-                recipientController.text,
-                description: descriptionController.text.isEmpty
-                    ? null
-                    : descriptionController.text,
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          onPressed: () async {
+            final amount = double.tryParse(amountController.text);
+            if (amount == null || amount <= 0) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Please enter a valid amount')),
               );
+              return;
+            }
 
-              if (context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(success
-                        ? 'Money withdrawn successfully!'
-                        : appState.errorMessage ?? 'Failed to withdraw money'),
-                    backgroundColor: success ? Colors.green : Colors.red,
-                  ),
+            if (recipientController.text.isEmpty) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Please enter recipient name')),
+              );
+              return;
+            }
+
+            Navigator.pop(context);
+
+            // Check withdrawal first
+            final appState = Provider.of<AppState>(context, listen: false);
+              try {
+                final checkResult = await appState.checkWithdrawal(amount);
+                final exceedsSafeBalance = checkResult['exceedsSafeBalance'] == true;
+                final safeBalance = checkResult['safeBalance'];
+                final canAfford = checkResult['canAfford'] == true;
+
+                if (!canAfford) {
+                  // Insufficient balance
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Insufficient balance'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                  }
+                  return;
+                }
+
+                if (exceedsSafeBalance) {
+                  // Show warning confirmation dialog
+                  if (context.mounted) {
+                    final confirm = await showDialog<bool>(
+                      context: context,
+                      builder: (context) => AlertDialog(
+                        title: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: const [
+                            Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 24),
+                            SizedBox(width: 8),
+                            Flexible(
+                              child: Text(
+                                'Warning',
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                        content: SingleChildScrollView(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'This withdrawal (RM ${amount.toStringAsFixed(2)}) exceeds your safe balance (RM ${safeBalance.toStringAsFixed(2)}).',
+                                style: const TextStyle(fontWeight: FontWeight.bold),
+                              ),
+                              const SizedBox(height: 12),
+                              const Text(
+                                'This means you may not have enough to cover your upcoming bills and expenses.',
+                              ),
+                              const SizedBox(height: 16),
+                              const Text(
+                                'Do you want to proceed anyway?',
+                                style: TextStyle(fontWeight: FontWeight.w600),
+                              ),
+                            ],
+                          ),
+                        ),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(context, false),
+                            child: const Text('Cancel'),
+                          ),
+                          ElevatedButton(
+                            onPressed: () => Navigator.pop(context, true),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.orange,
+                            ),
+                            child: const Text('Proceed'),
+                          ),
+                        ],
+                      ),
+                    );
+
+                    if (confirm != true) {
+                      return; // User cancelled
+                    }
+                  }
+                }
+
+                // Proceed with withdrawal
+                final success = await appState.withdrawMoney(
+                  amount,
+                  recipientController.text,
+                  description: descriptionController.text.isEmpty
+                      ? null
+                      : descriptionController.text,
                 );
+
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(success
+                          ? 'Money withdrawn successfully!'
+                          : appState.errorMessage ?? 'Failed to withdraw money'),
+                      backgroundColor: success ? Colors.green : Colors.red,
+                    ),
+                  );
+                }
+              } catch (e) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Error checking withdrawal: $e'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                }
               }
             },
             child: const Text('Withdraw'),
@@ -1440,6 +1551,168 @@ class _QuickActionChip extends StatelessWidget {
                 fontSize: 12,
                 fontWeight: FontWeight.w500,
                 color: Color(0xFF475569),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// --- PROMOTION BANNER ---
+class _PromotionBanner extends StatefulWidget {
+  const _PromotionBanner();
+
+  @override
+  State<_PromotionBanner> createState() => _PromotionBannerState();
+}
+
+class _PromotionBannerState extends State<_PromotionBanner> {
+  final ApiService _apiService = ApiService();
+  final String _userExternalId = ApiConfig.defaultUserExternalId;
+  Promotion? _topPromotion;
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTopPromotion();
+  }
+
+  Future<void> _loadTopPromotion() async {
+    try {
+      final promotions = await _apiService.getPromotions(
+        userExternalId: _userExternalId,
+      );
+
+      if (promotions.isNotEmpty) {
+        setState(() {
+          _topPromotion = promotions[0]; // First promotion is the top-ranked one
+          _isLoading = false;
+        });
+      } else {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      print('Error loading top promotion: $e');
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isLoading || _topPromotion == null) {
+      return const SizedBox.shrink();
+    }
+
+    return GestureDetector(
+      onTap: () {
+        // Navigate to PromotionsPage by changing the selected index
+        final homePageState = context.findAncestorStateOfType<_RytGuardHomePageState>();
+        if (homePageState != null) {
+          homePageState.setState(() {
+            homePageState._selectedIndex = 2; // Promotions tab index
+          });
+        }
+      },
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              const Color(0xFFFF6B35), // Bright orange-red
+              const Color(0xFFFF8C42), // Lighter orange
+            ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFFFF6B35).withOpacity(0.3),
+              blurRadius: 8,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            // Icon
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(
+                Icons.local_offer,
+                color: Colors.white,
+                size: 24,
+              ),
+            ),
+            const SizedBox(width: 16),
+            // Text content
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Special Offer',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.9),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    _topPromotion!.title,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      height: 1.3,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  if (_topPromotion!.subtitle != null) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      _topPromotion!.subtitle!,
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.9),
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            // Arrow icon
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(
+                Icons.arrow_forward_ios,
+                color: Colors.white,
+                size: 18,
               ),
             ),
           ],
