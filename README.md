@@ -128,7 +128,7 @@ Many Malaysians struggle with:
 - **Intl** - Date formatting and localization
 
 ### **Backend**
-- **Node.js 18+** - JavaScript runtime
+- **Node.js 24.x** - JavaScript runtime (Vercel requirement)
 - **TypeScript 5+** - Type-safe development
 - **Express.js 5** - Minimal web framework
 - **mysql2** - MySQL client with Promise support
@@ -247,7 +247,7 @@ Safe Balance = Current Balance - Upcoming Bills (30 days)
 ### Prerequisites
 ```bash
 # Backend
-- Node.js 18+
+- Node.js 24.x (Vercel requirement)
 - npm or yarn
 - TiDB Cloud account (or MySQL 8+)
 - Anthropic API key (Claude AI)

@@ -15,7 +15,7 @@
     "vercel-build": "npm run build"
   },
   "engines": {
-    "node": "18.x"
+    "node": "24.x"
   },
   "keywords": [
     "mcp",
