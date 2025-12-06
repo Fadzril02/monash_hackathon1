@@ -1,0 +1,9 @@
+.dart_tool
+.packages
+.pub
+build/web/**/*.map
+*.log
+.DS_Store
+.idea
+.vscode
+

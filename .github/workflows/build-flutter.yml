@@ -1,0 +1,51 @@
+name: Build Flutter Web for Vercel
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/build-flutter.yml'
+  pull_request:
+    branches: [ main, master ]
+    paths:
+      - 'frontend/**'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: 'stable'
+          cache: true
+      
+      - name: Install dependencies
+        run: |
+          cd frontend
+          flutter pub get
+      
+      - name: Build web
+        run: |
+          cd frontend
+          flutter build web --release --web-renderer canvaskit
+      
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-build
+          path: frontend/build/web
+          retention-days: 7
+      
+      - name: Summary
+        run: |
+          echo "✅ Flutter web build completed!"
+          echo "📦 Build output: frontend/build/web"
+          echo "🚀 Ready for Vercel deployment"
+

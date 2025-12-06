@@ -8,11 +8,14 @@ class ApiConfig {
   // Change this based on your platform
   static const String _androidEmulatorUrl = 'http://10.0.2.2:3001';
   static const String _iosSimulatorUrl = 'http://localhost:3001';
-  static const String _webUrl = 'http://localhost:3001'; // For Chrome/Web
+  static const String _webUrl = 'http://localhost:3001'; // For Chrome/Web (local)
   static const String _physicalDeviceUrl = 'http://192.168.1.100:3001'; // Update with your IP
+  static const String _productionUrl = 'https://your-backend.vercel.app'; // Update with your Vercel backend URL
 
   /// Current base URL - Change this based on your testing platform
-  static const String baseUrl = _webUrl; // Changed to Web for Chrome testing
+  /// For production deployment, update _productionUrl and use it here
+  static const String baseUrl = _webUrl; // Local development
+  // static const String baseUrl = _productionUrl; // Uncomment for production
 
   /// Default test user ID
   static const String defaultUserExternalId = 'john_doe_001';

@@ -49,6 +49,11 @@ app.use(cors({
     if (origin.includes('localhost') || origin.includes('127.0.0.1')) {
       return callback(null, true);
     }
+    // Allow Vercel deployments
+    if (origin.includes('vercel.app') || origin.includes('vercel.com')) {
+      return callback(null, true);
+    }
+    // Allow all origins (for development/hackathon)
     callback(null, true);
   },
   methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
@@ -1345,7 +1350,12 @@ app.get('/mcp', async (req: Request, res: Response) => {
   }
 });
 
-// Start the server
-app.listen(PORT, () => {
-      console.log(`🐘 PostgreSQL MCP Server running on port ${PORT}`);
-});
+// Export app for Vercel serverless
+export default app;
+
+// Start the server only if running locally (not on Vercel)
+if (process.env.VERCEL !== '1') {
+  app.listen(PORT, () => {
+    console.log(`🚀 Server running on http://localhost:${PORT}`);
+  });
+}
