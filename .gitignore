@@ -1,2 +1,3 @@
 mcp_check/.env
 frontend/.gitignore
+mcp_backend/.env
