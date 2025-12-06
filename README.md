@@ -266,6 +266,8 @@ cd mcp_backend
 npm install
 ```
 
+> **⚠️ Important:** Always run `npm install` on your target platform. Never copy `node_modules` between different operating systems (Windows/Linux/macOS). See [Troubleshooting Guide](mcp_backend/TROUBLESHOOTING.md) if you encounter platform-specific errors.
+
 2. **Configure environment:**
 ```bash
 # Create .env file
