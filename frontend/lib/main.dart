@@ -986,6 +986,12 @@ class _SafeBalanceCard extends StatelessWidget {
                 );
 
                 if (context.mounted) {
+                  // Refresh promotion banner after successful subscription add
+                  if (success) {
+                    final homePageState = context.findAncestorStateOfType<_RytGuardHomePageState>();
+                    homePageState?._promotionBannerKey.currentState?.refresh();
+                  }
+                  
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
                       content: Text(success
@@ -1037,6 +1043,12 @@ class _SafeBalanceCard extends StatelessWidget {
                       await appState.cancelSubscription(subscription.liabilityId);
 
                   if (context.mounted) {
+                    // Refresh promotion banner after successful cancellation
+                    if (success) {
+                      final homePageState = context.findAncestorStateOfType<_RytGuardHomePageState>();
+                      homePageState?._promotionBannerKey.currentState?.refresh();
+                    }
+                    
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
                         content: Text(success
