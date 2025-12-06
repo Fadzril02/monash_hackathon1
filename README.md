@@ -704,15 +704,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-## 📞 Contact & Support
-
-For questions or support:
-- GitHub Issues: [Create an issue](https://github.com/your-repo/issues)
-- Email: team@rytguard.com
-- Documentation: See `plan.md` for detailed feature specs
-
----
-
 **Built with ❤️ for financial wellness in Malaysia** 🇲🇾
 
 **Powered by:**
