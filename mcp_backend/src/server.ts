@@ -65,7 +65,7 @@ app.use(express.static('public'));
 // Transport storage for session management
 const transports: Record<string, StreamableHTTPServerTransport> = {};
 
-console.log("🐘 Starting PostgreSQL MCP Server...");
+console.log("🐬 Starting MySQL/TiDB MCP Server...");
 
 // MCP endpoint handler function
 const handleMCPRequest = async (req: Request, res: Response) => {
@@ -174,15 +174,26 @@ app.get('/health', (req: Request, res: Response) => {
 });
 
 // HACKATHON MVP: Direct REST API endpoint for quick queries
-import { Pool } from 'pg';
+import mysql from 'mysql2/promise';
 
-const pool = new Pool({
-  host: process.env.DB_HOST || 'localhost',
-  port: parseInt(process.env.DB_PORT || '5433'),
-  database: process.env.DB_NAME || 'ryt_guard',
-  user: process.env.DB_USER || 'postgres',
-  password: process.env.DB_PASSWORD || '420690',
-});
+// Parse DATABASE_URL or use individual environment variables
+let pool: mysql.Pool;
+
+if (process.env.DATABASE_URL) {
+  // Use DATABASE_URL (preferred for TiDB and cloud databases)
+  pool = mysql.createPool(process.env.DATABASE_URL);
+  console.log('📊 Using DATABASE_URL for MySQL/TiDB connection');
+} else {
+  // Fallback to individual environment variables
+  pool = mysql.createPool({
+    host: process.env.DB_HOST || 'localhost',
+    port: parseInt(process.env.DB_PORT || '3306'),
+    database: process.env.DB_NAME || 'ryt_guard',
+    user: process.env.DB_USER || 'root',
+    password: process.env.DB_PASSWORD || '',
+  });
+  console.log('📊 Using individual DB config for MySQL connection');
+}
 
 app.post('/api/query', async (req: Request, res: Response) => {
   try {
@@ -192,12 +203,12 @@ app.post('/api/query', async (req: Request, res: Response) => {
     }
 
     console.log(`📊 Executing query: ${query.substring(0, 100)}...`);
-    const result = await pool.query(query);
+    const [rows] = await pool.query(query);
 
     res.json({
       success: true,
-      data: result.rows,
-      rowCount: result.rowCount
+      data: rows,
+      rowCount: Array.isArray(rows) ? rows.length : 0
     });
   } catch (error: any) {
     console.error('❌ Query error:', error.message);
@@ -292,45 +303,47 @@ const BANKING_TOOLS: Anthropic.Tool[] = [
 // Helper function to execute MCP tools
 async function executeMCPTool(toolName: string, toolInput: any): Promise<any> {
   // Dynamically get user UUID from external_user_id
-  const userQuery = await pool.query(
-    'SELECT user_id FROM users WHERE external_user_id = $1',
+  const [userRows] = await pool.query(
+    'SELECT user_id FROM users WHERE external_user_id = ?',
     [toolInput.user_external_id]
   );
 
-  if (userQuery.rows.length === 0) {
+  if (!Array.isArray(userRows) || userRows.length === 0) {
     throw new Error(`User not found: ${toolInput.user_external_id}`);
   }
 
-  const userUuid = userQuery.rows[0].user_id;
+  const userUuid = (userRows as any[])[0].user_id;
   const lookaheadDays = toolInput.lookahead_days || 30;
 
   try {
     if (toolName === 'get-safe-balance') {
-      const query = `SELECT * FROM calculate_safe_balance('${userUuid}', ${lookaheadDays});`;
+      // MySQL uses CALL for stored procedures
+      const query = `CALL calculate_safe_balance(?, ?);`;
       console.log(`🔧 Executing tool: ${toolName}`);
-      const result = await pool.query(query);
-      return result.rows[0];
+      const [results] = await pool.query(query, [userUuid, lookaheadDays]);
+      return Array.isArray(results) && results[0] && Array.isArray(results[0]) ? results[0][0] : results[0];
     } else if (toolName === 'get-upcoming-bills') {
       const query = `
         SELECT * FROM v_upcoming_payments_30days
-        WHERE external_user_id = '${toolInput.user_external_id}'
-        AND payment_date <= CURRENT_DATE + INTERVAL '${lookaheadDays} days'
+        WHERE external_user_id = ?
+        AND payment_date <= DATE_ADD(CURRENT_DATE, INTERVAL ? DAY)
         ORDER BY payment_date ASC;
       `;
       console.log(`🔧 Executing tool: ${toolName}`);
-      const result = await pool.query(query);
+      const [rows] = await pool.query(query, [toolInput.user_external_id, lookaheadDays]);
+      const billRows = rows as any[];
       return {
         user_external_id: toolInput.user_external_id,
         lookahead_days: lookaheadDays,
-        bills_count: result.rows.length,
-        total_amount: result.rows.reduce((sum, bill) => sum + parseFloat(bill.amount || 0), 0),
-        bills: result.rows
+        bills_count: billRows.length,
+        total_amount: billRows.reduce((sum, bill) => sum + parseFloat(bill.amount || 0), 0),
+        bills: billRows
       };
     } else if (toolName === 'check-affordability') {
       // First get safe balance
-      const balanceQuery = `SELECT * FROM calculate_safe_balance('${userUuid}', ${lookaheadDays});`;
-      const balanceResult = await pool.query(balanceQuery);
-      const balance = balanceResult.rows[0];
+      const balanceQuery = `CALL calculate_safe_balance(?, ?);`;
+      const [balanceResults] = await pool.query(balanceQuery, [userUuid, lookaheadDays]);
+      const balance = Array.isArray(balanceResults) && balanceResults[0] && Array.isArray(balanceResults[0]) ? balanceResults[0][0] : balanceResults[0];
       const safeBalance = parseFloat(balance.safe_balance);
       const purchaseAmount = toolInput.purchase_amount;
 
@@ -350,50 +363,50 @@ async function executeMCPTool(toolName: string, toolInput: any): Promise<any> {
       console.log(`🔧 Executing tool: ${toolName}`);
 
       // Get average monthly income (last 3 months)
-      const incomeQuery = await pool.query(
+      const [incomeRows] = await pool.query(
         `SELECT AVG(monthly_income) as avg_income FROM (
-          SELECT DATE_TRUNC('month', transaction_date) as month,
+          SELECT DATE_FORMAT(transaction_date, '%Y-%m') as month,
                  SUM(amount) as monthly_income
           FROM transactions
-          WHERE user_id = $1
+          WHERE user_id = ?
             AND transaction_type = 'CREDIT'
-            AND transaction_date >= NOW() - INTERVAL '3 months'
+            AND transaction_date >= DATE_SUB(NOW(), INTERVAL 3 MONTH)
             AND category NOT IN ('Loan Disbursement', 'Refund')
-          GROUP BY DATE_TRUNC('month', transaction_date)
+          GROUP BY DATE_FORMAT(transaction_date, '%Y-%m')
         ) monthly_totals`,
         [userUuid]
       );
 
-      const avgIncome = incomeQuery.rows[0]?.avg_income ? parseFloat(incomeQuery.rows[0].avg_income) : 0;
+      const avgIncome = (incomeRows as any[])[0]?.avg_income ? parseFloat((incomeRows as any[])[0].avg_income) : 0;
 
       // Get average monthly expenses (last 3 months, excluding debt payments)
-      const expenseQuery = await pool.query(
+      const [expenseRows] = await pool.query(
         `SELECT AVG(monthly_expense) as avg_expense FROM (
-          SELECT DATE_TRUNC('month', transaction_date) as month,
+          SELECT DATE_FORMAT(transaction_date, '%Y-%m') as month,
                  SUM(ABS(amount)) as monthly_expense
           FROM transactions
-          WHERE user_id = $1
+          WHERE user_id = ?
             AND transaction_type = 'DEBIT'
-            AND transaction_date >= NOW() - INTERVAL '3 months'
+            AND transaction_date >= DATE_SUB(NOW(), INTERVAL 3 MONTH)
             AND category != 'LOAN'
-          GROUP BY DATE_TRUNC('month', transaction_date)
+          GROUP BY DATE_FORMAT(transaction_date, '%Y-%m')
         ) monthly_totals`,
         [userUuid]
       );
 
-      const avgExpenses = expenseQuery.rows[0]?.avg_expense ? parseFloat(expenseQuery.rows[0].avg_expense) : 0;
+      const avgExpenses = (expenseRows as any[])[0]?.avg_expense ? parseFloat((expenseRows as any[])[0].avg_expense) : 0;
 
       // Get total debt obligations (monthly debt payments for DSR calculation)
-      const debtQuery = await pool.query(
+      const [debtRows] = await pool.query(
         `SELECT SUM(amount) as total_debt
          FROM recurring_liabilities
-         WHERE user_id = $1
+         WHERE user_id = ?
            AND is_active = true
            AND liability_type IN ('LOAN', 'BNPL')`,
         [userUuid]
       );
 
-      const totalDebt = debtQuery.rows[0]?.total_debt ? parseFloat(debtQuery.rows[0].total_debt) : 0;
+      const totalDebt = (debtRows as any[])[0]?.total_debt ? parseFloat((debtRows as any[])[0].total_debt) : 0;
 
       // Calculate DSR (Debt Service Ratio)
       const dsr = avgIncome > 0 ? (totalDebt / avgIncome) * 100 : 0;
@@ -569,27 +582,26 @@ app.post('/api/reload', async (req: Request, res: Response) => {
     console.log(`💰 Reload request - User: ${userExternalId}, Amount: RM ${amount}`);
 
     // Get user
-    const userQuery = await pool.query(
-      'SELECT user_id, current_balance FROM users WHERE external_user_id = $1',
+    const [userRows] = await pool.query(
+      'SELECT user_id, current_balance FROM users WHERE external_user_id = ?',
       [userExternalId]
     );
 
-    if (userQuery.rows.length === 0) {
+    if (!Array.isArray(userRows) || userRows.length === 0) {
       return res.status(404).json({ error: 'User not found', success: false });
     }
 
-    const user = userQuery.rows[0];
+    const user = (userRows as any[])[0];
     const currentBalance = parseFloat(user.current_balance);
     const newBalance = currentBalance + amount;
 
     // Create transaction record
     const transactionId = `reload_${Date.now()}_${Math.random().toString(36).substring(7)}`;
-    const transactionResult = await pool.query(
+    const [transactionResult] = await pool.query(
       `INSERT INTO transactions
-       (user_id, external_transaction_id, amount, transaction_type, description, merchant_name,
+       (transaction_id, user_id, external_transaction_id, amount, transaction_type, description, merchant_name,
         category, balance_after, transaction_date, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9)
-       RETURNING *`,
+       VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)`,
       [
         user.user_id,
         transactionId,
@@ -605,7 +617,7 @@ app.post('/api/reload', async (req: Request, res: Response) => {
 
     // Update user balance
     await pool.query(
-      'UPDATE users SET current_balance = $1, updated_at = NOW() WHERE user_id = $2',
+      'UPDATE users SET current_balance = ?, updated_at = NOW() WHERE user_id = ?',
       [newBalance, user.user_id]
     );
 
@@ -614,11 +626,11 @@ app.post('/api/reload', async (req: Request, res: Response) => {
     res.json({
       success: true,
       transaction: {
-        id: transactionResult.rows[0].external_transaction_id,
+        id: transactionId,
         amount: amount,
         type: 'CREDIT',
         description: description || 'Reload via Bank Transfer',
-        date: transactionResult.rows[0].transaction_date,
+        date: new Date(),
         previousBalance: currentBalance,
         newBalance: newBalance
       }
@@ -652,24 +664,24 @@ app.post('/api/withdraw', async (req: Request, res: Response) => {
     console.log(`💸 Withdraw request - User: ${userExternalId}, Amount: RM ${amount}, To: ${recipientName}`);
 
     // Get user and calculate safe balance
-    const userQuery = await pool.query(
-      'SELECT user_id, current_balance FROM users WHERE external_user_id = $1',
+    const [userRows] = await pool.query(
+      'SELECT user_id, current_balance FROM users WHERE external_user_id = ?',
       [userExternalId]
     );
 
-    if (userQuery.rows.length === 0) {
+    if (!Array.isArray(userRows) || userRows.length === 0) {
       return res.status(404).json({ error: 'User not found', success: false });
     }
 
-    const user = userQuery.rows[0];
+    const user = (userRows as any[])[0];
     const userId = user.user_id;
 
     // Calculate safe balance
-    const safeBalanceQuery = await pool.query(
-      'SELECT * FROM calculate_safe_balance($1, 30)',
+    const [safeBalanceResults] = await pool.query(
+      'CALL calculate_safe_balance(?, 30)',
       [userId]
     );
-    const safeBalanceData = safeBalanceQuery.rows[0];
+    const safeBalanceData = Array.isArray(safeBalanceResults) && safeBalanceResults[0] && Array.isArray(safeBalanceResults[0]) ? safeBalanceResults[0][0] : safeBalanceResults[0];
     const safeBalance = parseFloat(safeBalanceData.safe_balance);
     const currentBalance = parseFloat(safeBalanceData.current_balance);
 
@@ -688,12 +700,11 @@ app.post('/api/withdraw', async (req: Request, res: Response) => {
 
     // Create transaction record
     const transactionId = `withdraw_${Date.now()}_${Math.random().toString(36).substring(7)}`;
-    const transactionResult = await pool.query(
+    const [transactionResult] = await pool.query(
       `INSERT INTO transactions
-       (user_id, external_transaction_id, amount, transaction_type, description, merchant_name,
+       (transaction_id, user_id, external_transaction_id, amount, transaction_type, description, merchant_name,
         category, balance_after, transaction_date, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9)
-       RETURNING *`,
+       VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)`,
       [
         userId,
         transactionId,
@@ -709,7 +720,7 @@ app.post('/api/withdraw', async (req: Request, res: Response) => {
 
     // Update user balance
     await pool.query(
-      'UPDATE users SET current_balance = $1, updated_at = NOW() WHERE user_id = $2',
+      'UPDATE users SET current_balance = ?, updated_at = NOW() WHERE user_id = ?',
       [newBalance, userId]
     );
 
@@ -750,32 +761,32 @@ app.get('/api/subscriptions', async (req: Request, res: Response) => {
     console.log(`📋 Fetching subscriptions for user: ${userExternalId}`);
 
     // Get user
-    const userQuery = await pool.query(
-      'SELECT user_id FROM users WHERE external_user_id = $1',
+    const [userRows] = await pool.query(
+      'SELECT user_id FROM users WHERE external_user_id = ?',
       [userExternalId]
     );
 
-    if (userQuery.rows.length === 0) {
+    if (!Array.isArray(userRows) || userRows.length === 0) {
       return res.status(404).json({ error: 'User not found', success: false });
     }
 
-    const userId = userQuery.rows[0].user_id;
+    const userId = (userRows as any[])[0].user_id;
 
     // Get active subscriptions/liabilities
-    const subscriptionsQuery = await pool.query(
+    const [subscriptionRows] = await pool.query(
       `SELECT liability_id, liability_type, liability_name, amount, recurrence_pattern,
               next_due_date, last_paid_date, is_verified, created_at
        FROM recurring_liabilities
-       WHERE user_id = $1 AND is_active = true
+       WHERE user_id = ? AND is_active = true
        ORDER BY next_due_date ASC`,
       [userId]
     );
 
-    console.log(`✅ Found ${subscriptionsQuery.rows.length} active subscriptions`);
+    console.log(`✅ Found ${(subscriptionRows as any[]).length} active subscriptions`);
 
     res.json({
       success: true,
-      subscriptions: subscriptionsQuery.rows
+      subscriptions: subscriptionRows
     });
 
   } catch (error: any) {
@@ -812,34 +823,38 @@ app.post('/api/add-subscription', async (req: Request, res: Response) => {
     console.log(`➕ Adding subscription - User: ${userExternalId}, Name: ${subscriptionName}, Amount: RM ${amount}`);
 
     // Get user
-    const userQuery = await pool.query(
-      'SELECT user_id FROM users WHERE external_user_id = $1',
+    const [userRows] = await pool.query(
+      'SELECT user_id FROM users WHERE external_user_id = ?',
       [userExternalId]
     );
 
-    if (userQuery.rows.length === 0) {
+    if (!Array.isArray(userRows) || userRows.length === 0) {
       return res.status(404).json({ error: 'User not found', success: false });
     }
 
-    const userId = userQuery.rows[0].user_id;
+    const userId = (userRows as any[])[0].user_id;
 
     // Insert new subscription (using MONTHLY as default recurrence for example)
-    const subscriptionResult = await pool.query(
+    const [subscriptionResult] = await pool.query(
       `INSERT INTO recurring_liabilities
-       (user_id, liability_type, liability_name, amount, recurrence_pattern, next_due_date, is_verified, is_active)
-       VALUES ($1, $2, $3, $4, 'MONTHLY', $5, true, true)
-       RETURNING *`,
+       (liability_id, user_id, liability_type, liability_name, amount, recurrence_pattern, next_due_date, is_verified, is_active)
+       VALUES (UUID(), ?, ?, ?, ?, 'MONTHLY', ?, true, true)`,
       [userId, type, subscriptionName, amount, nextDueDate]
     );
 
-    const newSubscription = subscriptionResult.rows[0];
+    // Get the inserted subscription ID (MySQL doesn't have RETURNING, use LAST_INSERT_ID or a separate query)
+    const [newSubRows] = await pool.query(
+      `SELECT liability_id FROM recurring_liabilities WHERE user_id = ? ORDER BY created_at DESC LIMIT 1`,
+      [userId]
+    );
+    const newSubscription = (newSubRows as any[])[0];
 
     // Create projected payment for this subscription
     await pool.query(
-      `INSERT INTO projected_payments (user_id, liability_id, payment_date, amount, payment_status)
-       VALUES ($1, $2, $3, $4, 'UNPAID')
-       ON CONFLICT (liability_id, payment_date) DO NOTHING`,
-      [userId, newSubscription.liability_id, nextDueDate, amount]
+      `INSERT INTO projected_payments (payment_id, user_id, liability_id, payment_date, amount, payment_status)
+       VALUES (UUID(), ?, ?, ?, ?, 'UNPAID')
+       ON DUPLICATE KEY UPDATE amount = ?`,
+      [userId, newSubscription.liability_id, nextDueDate, amount, amount]
     );
 
     console.log(`✅ Subscription added successfully`);
@@ -881,23 +896,23 @@ app.post('/api/cancel-subscription', async (req: Request, res: Response) => {
     console.log(`❌ Cancelling subscription - User: ${userExternalId}, Liability ID: ${liabilityId}`);
 
     // Get subscription details before cancelling
-    const subscriptionQuery = await pool.query(
+    const [subscriptionRows] = await pool.query(
       `SELECT rl.liability_name, rl.amount, rl.liability_type
        FROM recurring_liabilities rl
        JOIN users u ON rl.user_id = u.user_id
-       WHERE u.external_user_id = $1 AND rl.liability_id = $2 AND rl.is_active = true`,
+       WHERE u.external_user_id = ? AND rl.liability_id = ? AND rl.is_active = true`,
       [userExternalId, liabilityId]
     );
 
-    if (subscriptionQuery.rows.length === 0) {
+    if (!Array.isArray(subscriptionRows) || subscriptionRows.length === 0) {
       return res.status(404).json({ error: 'Subscription not found or already cancelled', success: false });
     }
 
-    const subscription = subscriptionQuery.rows[0];
+    const subscription = (subscriptionRows as any[])[0];
 
     // Mark subscription as inactive (cancelled)
     await pool.query(
-      'UPDATE recurring_liabilities SET is_active = false, updated_at = NOW() WHERE liability_id = $1',
+      'UPDATE recurring_liabilities SET is_active = false, updated_at = NOW() WHERE liability_id = ?',
       [liabilityId]
     );
 
@@ -905,7 +920,7 @@ app.post('/api/cancel-subscription', async (req: Request, res: Response) => {
     await pool.query(
       `UPDATE projected_payments
        SET payment_status = 'SKIPPED'
-       WHERE liability_id = $1 AND payment_status = 'UNPAID' AND payment_date >= CURRENT_DATE`,
+       WHERE liability_id = ? AND payment_status = 'UNPAID' AND payment_date >= CURRENT_DATE`,
       [liabilityId]
     );
 
@@ -949,66 +964,69 @@ app.get('/api/v2/financial/history', async (req: Request, res: Response) => {
     console.log(`📊 Fetching financial history for user: ${userExternalId}`);
 
     // Get user
-    const userQuery = await pool.query(
-      'SELECT user_id, current_balance FROM users WHERE external_user_id = $1',
+    const [userRows] = await pool.query(
+      'SELECT user_id, current_balance FROM users WHERE external_user_id = ?',
       [userExternalId]
     );
 
-    if (userQuery.rows.length === 0) {
+    if (!Array.isArray(userRows) || userRows.length === 0) {
       return res.status(404).json({ error: 'User not found', success: false });
     }
 
-    const user = userQuery.rows[0];
+    const user = (userRows as any[])[0];
 
     // Get average monthly income (last N months)
-    const incomeQuery = await pool.query(
+    const [incomeRows] = await pool.query(
       `SELECT
-        DATE_TRUNC('month', transaction_date) as month,
+        DATE_FORMAT(transaction_date, '%Y-%m') as month,
         SUM(amount) as total_income
       FROM transactions
-      WHERE user_id = $1
+      WHERE user_id = ?
         AND transaction_type = 'CREDIT'
-        AND transaction_date >= NOW() - INTERVAL '${months} months'
+        AND transaction_date >= DATE_SUB(NOW(), INTERVAL ? MONTH)
         AND category NOT IN ('Loan Disbursement', 'Refund')
-      GROUP BY DATE_TRUNC('month', transaction_date)
+      GROUP BY DATE_FORMAT(transaction_date, '%Y-%m')
       ORDER BY month DESC`,
-      [user.user_id]
+      [user.user_id, months]
     );
 
-    const avgIncome = incomeQuery.rows.length > 0
-      ? incomeQuery.rows.reduce((sum, row) => sum + parseFloat(row.total_income), 0) / incomeQuery.rows.length
+    const incomeData = incomeRows as any[];
+    const avgIncome = incomeData.length > 0
+      ? incomeData.reduce((sum, row) => sum + parseFloat(row.total_income), 0) / incomeData.length
       : 0;
 
     // Get average monthly expenses (last N months, excluding debt payments)
-    const expenseQuery = await pool.query(
+    const [expenseRows] = await pool.query(
       `SELECT
-        DATE_TRUNC('month', transaction_date) as month,
+        DATE_FORMAT(transaction_date, '%Y-%m') as month,
         SUM(ABS(amount)) as total_expense
       FROM transactions
-      WHERE user_id = $1
+      WHERE user_id = ?
         AND transaction_type = 'DEBIT'
-        AND transaction_date >= NOW() - INTERVAL '${months} months'
+        AND transaction_date >= DATE_SUB(NOW(), INTERVAL ? MONTH)
         AND category != 'LOAN'
-      GROUP BY DATE_TRUNC('month', transaction_date)
+      GROUP BY DATE_FORMAT(transaction_date, '%Y-%m')
       ORDER BY month DESC`,
-      [user.user_id]
+      [user.user_id, months]
     );
 
-    const avgExpenses = expenseQuery.rows.length > 0
-      ? expenseQuery.rows.reduce((sum, row) => sum + parseFloat(row.total_expense), 0) / expenseQuery.rows.length
+    const expenseData = expenseRows as any[];
+    const avgExpenses = expenseData.length > 0
+      ? expenseData.reduce((sum, row) => sum + parseFloat(row.total_expense), 0) / expenseData.length
       : 0;
 
     // Get active recurring liabilities (debt obligations)
-    const liabilitiesQuery = await pool.query(
+    const [liabilityRows] = await pool.query(
       `SELECT liability_id, liability_type, liability_name, amount, recurrence_pattern, next_due_date
        FROM recurring_liabilities
-       WHERE user_id = $1 AND is_active = true
+       WHERE user_id = ? AND is_active = true
        ORDER BY next_due_date ASC`,
       [user.user_id]
     );
 
+    const liabilityData = liabilityRows as any[];
     // Calculate total monthly debt obligations (DSR calculation)
-    const totalDebtPayments = liabilitiesQuery.rows
+    const totalDebtPayments = liabilityData
       .filter(l => ['LOAN', 'BNPL'].includes(l.liability_type))
       .reduce((sum, l) => sum + parseFloat(l.amount), 0);
 
