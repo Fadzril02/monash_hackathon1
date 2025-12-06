@@ -6,6 +6,7 @@ import '../models/transaction.dart';
 import '../models/safe_balance.dart';
 import '../models/chat_message.dart';
 import '../models/api_exception.dart';
+import '../models/financial_analysis.dart';
 
 class ApiService {
   /// Check if backend server is healthy
@@ -317,6 +318,41 @@ class ApiService {
     } catch (e) {
       if (e is ApiException) rethrow;
       throw ApiException(message: 'Network error: $e');
+    }
+  }
+
+  /// Get financial analysis (DSR, income, expenses, debt)
+  Future<FinancialAnalysis> getFinancialAnalysis({
+    required String userExternalId,
+  }) async {
+    try {
+      final response = await http.get(
+        Uri.parse(
+            '${ApiConfig.baseUrl}/api/v2/financial/history?userExternalId=$userExternalId'),
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data['success'] == true) {
+          return FinancialAnalysis.fromJson(data['data']);
+        } else {
+          throw ApiException(
+            message: data['error'] ?? 'Failed to load financial analysis',
+            statusCode: response.statusCode,
+          );
+        }
+      } else {
+        final error = jsonDecode(response.body);
+        throw ApiException(
+          message: error['error'] ?? 'Failed to load financial analysis',
+          statusCode: response.statusCode,
+        );
+      }
+    } catch (e) {
+      if (e is ApiException) rethrow;
+      throw ApiException(
+        message: 'Network error: Unable to get financial analysis. $e',
+      );
     }
   }
 

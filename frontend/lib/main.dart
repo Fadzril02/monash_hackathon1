@@ -4,6 +4,8 @@ import 'package:intl/intl.dart';
 import 'providers/app_state.dart';
 import 'models/subscription.dart';
 import 'models/chat_message.dart';
+import 'widgets/prediction_dashboard.dart';
+import 'widgets/what_if_dialog.dart';
 
 void main() {
   runApp(const RytGuardApp());
@@ -28,22 +30,31 @@ class RytGuardApp extends StatelessWidget {
   }
 }
 
-class RytGuardHomePage extends StatelessWidget {
+class RytGuardHomePage extends StatefulWidget {
   const RytGuardHomePage({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: Consumer<AppState>(
-        builder: (context, appState, child) {
-          if (appState.isLoading && appState.safeBalance == null) {
-            return const Center(
-              child: CircularProgressIndicator(),
-            );
-          }
+  State<RytGuardHomePage> createState() => _RytGuardHomePageState();
+}
 
-          if (!appState.isBackendConnected) {
-            return Center(
+class _RytGuardHomePageState extends State<RytGuardHomePage> {
+  int _selectedIndex = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<AppState>(
+      builder: (context, appState, child) {
+        if (appState.isLoading && appState.safeBalance == null) {
+          return const Scaffold(
+            body: Center(
+              child: CircularProgressIndicator(),
+            ),
+          );
+        }
+
+        if (!appState.isBackendConnected) {
+          return Scaffold(
+            body: Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
@@ -62,33 +73,82 @@ class RytGuardHomePage extends StatelessWidget {
                   ),
                 ],
               ),
-            );
-          }
-
-          return SingleChildScrollView(
-            child: Column(
-              children: [
-                const _HeaderSection(),
-                const SizedBox(height: 20),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const _SafeBalanceCard(),
-                      const SizedBox(height: 20),
-                      const _ChatbotWidget(),
-                      const SizedBox(height: 20),
-                      _UpcomingBillsSection(subscriptions: appState.subscriptions),
-                      const SizedBox(height: 40),
-                    ],
-                  ),
-                ),
-              ],
             ),
           );
-        },
-      ),
+        }
+
+        return Scaffold(
+          body: IndexedStack(
+            index: _selectedIndex,
+            children: [
+              // Main Dashboard
+              SingleChildScrollView(
+                child: Column(
+                  children: [
+                    const _HeaderSection(),
+                    const SizedBox(height: 20),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const _SafeBalanceCard(),
+                          const SizedBox(height: 20),
+                          const _ChatbotWidget(),
+                          const SizedBox(height: 20),
+                          _UpcomingBillsSection(subscriptions: appState.subscriptions),
+                          const SizedBox(height: 40),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              // Prediction Dashboard
+              Column(
+                children: [
+                  const _HeaderSection(),
+                  Expanded(
+                    child: const PredictionDashboard(),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          floatingActionButton: _selectedIndex == 1
+              ? FloatingActionButton.extended(
+                  onPressed: () {
+                    showDialog(
+                      context: context,
+                      builder: (context) => const WhatIfDialog(),
+                    );
+                  },
+                  icon: const Icon(Icons.science),
+                  label: const Text('What-If'),
+                  backgroundColor: const Color(0xFF0000E6),
+                )
+              : null,
+          bottomNavigationBar: BottomNavigationBar(
+            currentIndex: _selectedIndex,
+            onTap: (index) {
+              setState(() {
+                _selectedIndex = index;
+              });
+            },
+            selectedItemColor: const Color(0xFF0000E6),
+            items: const [
+              BottomNavigationBarItem(
+                icon: Icon(Icons.home),
+                label: 'Home',
+              ),
+              BottomNavigationBarItem(
+                icon: Icon(Icons.trending_up),
+                label: 'Predictions',
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }
@@ -876,10 +936,57 @@ class _ChatbotWidgetState extends State<_ChatbotWidget> {
                 ),
               ),
 
+              // Quick Action Buttons
+              if (chatHistory.isEmpty)
+                Container(
+                  color: const Color(0xFFF8FAFC),
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Quick Actions:',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF64748B),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          _QuickActionChip(
+                            label: 'Check my financial health',
+                            icon: '💰',
+                            onTap: () => _sendMessage('What is my current financial health? Show me my DSR and upcoming bills.'),
+                          ),
+                          _QuickActionChip(
+                            label: 'Can I afford this?',
+                            icon: '🛒',
+                            onTap: () => _sendMessage('Can I afford a purchase of RM 500?'),
+                          ),
+                          _QuickActionChip(
+                            label: '12-month prediction',
+                            icon: '📊',
+                            onTap: () => _sendMessage('Show me my 12-month financial projection. What will my DSR look like?'),
+                          ),
+                          _QuickActionChip(
+                            label: 'Spending tips',
+                            icon: '💡',
+                            onTap: () => _sendMessage('Give me tips to improve my financial health and reduce debt.'),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+
               // Chat Body
               Container(
                 color: const Color(0xFFF8FAFC),
-                height: chatHistory.isEmpty ? 150 : 300,
+                height: chatHistory.isEmpty ? 200 : 300,
                 padding: const EdgeInsets.all(16),
                 child: chatHistory.isEmpty
                     ? const Center(
@@ -1286,6 +1393,57 @@ class _BillItem extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+// Quick Action Chip Widget
+class _QuickActionChip extends StatelessWidget {
+  final String label;
+  final String icon;
+  final VoidCallback onTap;
+
+  const _QuickActionChip({
+    required this.label,
+    required this.icon,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: const Color(0xFFE2E8F0)),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x0A000000),
+              blurRadius: 2,
+              offset: Offset(0, 1),
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(icon, style: const TextStyle(fontSize: 14)),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: Color(0xFF475569),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

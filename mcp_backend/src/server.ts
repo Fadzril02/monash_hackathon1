@@ -272,13 +272,36 @@ const BANKING_TOOLS: Anthropic.Tool[] = [
       },
       required: ['user_external_id', 'purchase_amount']
     }
+  },
+  {
+    name: 'get-financial-analysis',
+    description: 'Get comprehensive financial analysis including current DSR, average income/expenses, and debt obligations. Use this to understand the user\'s overall financial health and make predictions.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        user_external_id: {
+          type: 'string',
+          description: 'External user ID (e.g., john_doe_001)'
+        }
+      },
+      required: ['user_external_id']
+    }
   }
 ];
 
 // Helper function to execute MCP tools
 async function executeMCPTool(toolName: string, toolInput: any): Promise<any> {
-  // Map external_user_id to UUID for database queries
-  const userUuid = 'd335c9de-32fb-429f-b3c2-dac1e7e29cbd'; // John Doe's UUID
+  // Dynamically get user UUID from external_user_id
+  const userQuery = await pool.query(
+    'SELECT user_id FROM users WHERE external_user_id = $1',
+    [toolInput.user_external_id]
+  );
+
+  if (userQuery.rows.length === 0) {
+    throw new Error(`User not found: ${toolInput.user_external_id}`);
+  }
+
+  const userUuid = userQuery.rows[0].user_id;
   const lookaheadDays = toolInput.lookahead_days || 30;
 
   try {
@@ -321,6 +344,70 @@ async function executeMCPTool(toolName: string, toolInput: any): Promise<any> {
         recommendation: purchaseAmount <= safeBalance
           ? 'Go ahead - this is within your safe balance!'
           : 'Wait until bills are paid - this exceeds your safe balance.'
+      };
+    } else if (toolName === 'get-financial-analysis') {
+      // Get financial analysis using existing tables only
+      console.log(`🔧 Executing tool: ${toolName}`);
+
+      // Get average monthly income (last 3 months)
+      const incomeQuery = await pool.query(
+        `SELECT AVG(monthly_income) as avg_income FROM (
+          SELECT DATE_TRUNC('month', transaction_date) as month,
+                 SUM(amount) as monthly_income
+          FROM transactions
+          WHERE user_id = $1
+            AND transaction_type = 'CREDIT'
+            AND transaction_date >= NOW() - INTERVAL '3 months'
+            AND category NOT IN ('Loan Disbursement', 'Refund')
+          GROUP BY DATE_TRUNC('month', transaction_date)
+        ) monthly_totals`,
+        [userUuid]
+      );
+
+      const avgIncome = incomeQuery.rows[0]?.avg_income ? parseFloat(incomeQuery.rows[0].avg_income) : 0;
+
+      // Get average monthly expenses (last 3 months, excluding debt payments)
+      const expenseQuery = await pool.query(
+        `SELECT AVG(monthly_expense) as avg_expense FROM (
+          SELECT DATE_TRUNC('month', transaction_date) as month,
+                 SUM(ABS(amount)) as monthly_expense
+          FROM transactions
+          WHERE user_id = $1
+            AND transaction_type = 'DEBIT'
+            AND transaction_date >= NOW() - INTERVAL '3 months'
+            AND category != 'LOAN'
+          GROUP BY DATE_TRUNC('month', transaction_date)
+        ) monthly_totals`,
+        [userUuid]
+      );
+
+      const avgExpenses = expenseQuery.rows[0]?.avg_expense ? parseFloat(expenseQuery.rows[0].avg_expense) : 0;
+
+      // Get total debt obligations (monthly debt payments for DSR calculation)
+      const debtQuery = await pool.query(
+        `SELECT SUM(amount) as total_debt
+         FROM recurring_liabilities
+         WHERE user_id = $1
+           AND is_active = true
+           AND liability_type IN ('LOAN', 'BNPL')`,
+        [userUuid]
+      );
+
+      const totalDebt = debtQuery.rows[0]?.total_debt ? parseFloat(debtQuery.rows[0].total_debt) : 0;
+
+      // Calculate DSR (Debt Service Ratio)
+      const dsr = avgIncome > 0 ? (totalDebt / avgIncome) * 100 : 0;
+
+      // DSR Status based on rytguard_mvp_schema.sql thresholds
+      // < 30%: HEALTHY, 30-40%: WARNING, >= 40%: CRITICAL
+      return {
+        user_external_id: toolInput.user_external_id,
+        avg_monthly_income: avgIncome,
+        avg_monthly_expenses: avgExpenses,
+        total_debt_payments: totalDebt,
+        current_dsr: dsr,
+        dsr_status: dsr < 30 ? 'HEALTHY' : dsr < 40 ? 'WARNING' : 'CRITICAL',
+        financial_health_score: dsr < 30 ? 'Good' : dsr < 40 ? 'Fair' : 'Poor'
       };
     }
     throw new Error(`Unknown tool: ${toolName}`);
@@ -837,6 +924,122 @@ app.post('/api/cancel-subscription', async (req: Request, res: Response) => {
 
   } catch (error: any) {
     console.error('❌ Cancel subscription error:', error.message);
+    res.status(500).json({
+      error: error.message,
+      success: false
+    });
+  }
+});
+
+// ============================================
+// PHASE 2: PREDICTIVE FINANCIAL MODELING (Simplified - No Schema Changes)
+// Uses existing tables only: users, transactions, recurring_liabilities
+// ============================================
+
+// Get historical financial data for projection (uses existing tables only)
+app.get('/api/v2/financial/history', async (req: Request, res: Response) => {
+  try {
+    const userExternalId = req.query.userExternalId as string;
+    const months = parseInt(req.query.months as string) || 3;
+
+    if (!userExternalId) {
+      return res.status(400).json({ error: 'User ID is required', success: false });
+    }
+
+    console.log(`📊 Fetching financial history for user: ${userExternalId}`);
+
+    // Get user
+    const userQuery = await pool.query(
+      'SELECT user_id, current_balance FROM users WHERE external_user_id = $1',
+      [userExternalId]
+    );
+
+    if (userQuery.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found', success: false });
+    }
+
+    const user = userQuery.rows[0];
+
+    // Get average monthly income (last N months)
+    const incomeQuery = await pool.query(
+      `SELECT
+        DATE_TRUNC('month', transaction_date) as month,
+        SUM(amount) as total_income
+      FROM transactions
+      WHERE user_id = $1
+        AND transaction_type = 'CREDIT'
+        AND transaction_date >= NOW() - INTERVAL '${months} months'
+        AND category NOT IN ('Loan Disbursement', 'Refund')
+      GROUP BY DATE_TRUNC('month', transaction_date)
+      ORDER BY month DESC`,
+      [user.user_id]
+    );
+
+    const avgIncome = incomeQuery.rows.length > 0
+      ? incomeQuery.rows.reduce((sum, row) => sum + parseFloat(row.total_income), 0) / incomeQuery.rows.length
+      : 0;
+
+    // Get average monthly expenses (last N months, excluding debt payments)
+    const expenseQuery = await pool.query(
+      `SELECT
+        DATE_TRUNC('month', transaction_date) as month,
+        SUM(ABS(amount)) as total_expense
+      FROM transactions
+      WHERE user_id = $1
+        AND transaction_type = 'DEBIT'
+        AND transaction_date >= NOW() - INTERVAL '${months} months'
+        AND category != 'LOAN'
+      GROUP BY DATE_TRUNC('month', transaction_date)
+      ORDER BY month DESC`,
+      [user.user_id]
+    );
+
+    const avgExpenses = expenseQuery.rows.length > 0
+      ? expenseQuery.rows.reduce((sum, row) => sum + parseFloat(row.total_expense), 0) / expenseQuery.rows.length
+      : 0;
+
+    // Get active recurring liabilities (debt obligations)
+    const liabilitiesQuery = await pool.query(
+      `SELECT liability_id, liability_type, liability_name, amount, recurrence_pattern, next_due_date
+       FROM recurring_liabilities
+       WHERE user_id = $1 AND is_active = true
+       ORDER BY next_due_date ASC`,
+      [user.user_id]
+    );
+
+    // Calculate total monthly debt obligations (DSR calculation)
+    const totalDebtPayments = liabilitiesQuery.rows
+      .filter(l => ['LOAN', 'BNPL'].includes(l.liability_type))
+      .reduce((sum, l) => sum + parseFloat(l.amount), 0);
+
+    // Calculate DSR (Debt Service Ratio)
+    const currentDsr = avgIncome > 0 ? (totalDebtPayments / avgIncome) * 100 : 0;
+
+    // Determine DSR status based on rytguard_mvp_schema.sql thresholds
+    // < 30%: HEALTHY, 30-40%: WARNING, >= 40%: CRITICAL
+    let dsrStatus = 'HEALTHY';
+    if (currentDsr >= 40) {
+      dsrStatus = 'CRITICAL';
+    } else if (currentDsr >= 30) {
+      dsrStatus = 'WARNING';
+    }
+
+    res.json({
+      success: true,
+      data: {
+        user_external_id: userExternalId,
+        current_balance: parseFloat(user.current_balance),
+        avg_monthly_income: avgIncome,
+        avg_monthly_expenses: avgExpenses,
+        total_debt_payments: totalDebtPayments,
+        current_dsr: currentDsr,
+        dsr_status: dsrStatus,
+        calculated_at: new Date().toISOString()
+      }
+    });
+
+  } catch (error: any) {
+    console.error('❌ Financial history error:', error.message);
     res.status(500).json({
       error: error.message,
       success: false
