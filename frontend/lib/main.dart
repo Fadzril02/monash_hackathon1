@@ -133,9 +133,16 @@ class _RytGuardHomePageState extends State<RytGuardHomePage> {
                       builder: (context) => const WhatIfDialog(),
                     );
                   },
-                  icon: const Icon(Icons.science),
-                  label: const Text('What-If'),
+                  icon: const Icon(Icons.science, color: Colors.white),
+                  label: const Text(
+                    'What-If',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                   backgroundColor: const Color(0xFF0000E6),
+                  foregroundColor: Colors.white,
                 )
               : null,
           bottomNavigationBar: BottomNavigationBar(
